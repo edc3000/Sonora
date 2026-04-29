@@ -1,0 +1,15 @@
+{
+  "name": "Sonora AI Radio",
+  "short_name": "Sonora",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#e7e1d3",
+  "theme_color": "#242726",
+  "icons": [
+    {
+      "src": "/assets/album-sonora.png",
+      "sizes": "1024x1024",
+      "type": "image/png"
+    }
+  ]
+}

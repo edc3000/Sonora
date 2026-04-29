@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#08090f">
+    <title>Sonora AI Radio</title>
+    <link rel="manifest" href="/manifest.json">
+    <link rel="stylesheet" href="/styles.css?v=15">
+  </head>
+  <body>
+    <div class="noise-layer" aria-hidden="true"></div>
+    <audio id="hostAudio" preload="auto" playsinline></audio>
+    <div class="app-shell">
+      <main class="radio-console" aria-labelledby="playerTitle">
+        <header class="console-top">
+          <div class="brand">
+            <span class="brand-word pixel-brand" aria-label="Sonora">Sonora</span>
+          </div>
+          <div class="top-actions">
+            <button id="ncmLoginBtn" class="pill-button" type="button">LOGIN</button>
+            <div class="mode-switch" aria-label="Display mode">
+              <button class="active" data-theme-button="dark" type="button">DARK</button>
+              <button data-theme-button="light" type="button">LIGHT</button>
+            </div>
+            <button id="openSettings" class="settings-button" type="button" aria-label="Open settings">SET</button>
+          </div>
+        </header>
+
+        <section class="hero-clock">
+          <div class="matrix-field" aria-hidden="true"></div>
+          <p class="eyebrow">LOCAL BROADCAST</p>
+          <h1 id="playerTitle" class="dot-time pixel-clock" aria-label="Current time 11:14"></h1>
+          <p id="calendarLine" class="date-line">Sunday · 12 APR 2026</p>
+          <div class="on-air">
+            <span></span>
+            <strong id="hostState">idle</strong>
+          </div>
+        </section>
+
+        <section class="transport-panel" aria-label="Playback controls">
+          <div class="track-cover">
+            <img id="trackCover" src="/assets/album-sonora.png" alt="Current track cover art">
+          </div>
+          <div class="track-meta">
+            <p id="trackTitle">No track yet</p>
+            <span id="trackArtist">Sonora Host</span>
+          </div>
+          <div class="control-row">
+            <button class="icon-button" id="prevBtn" type="button" aria-label="Previous track">‹</button>
+            <button class="play-button" id="playBtn" type="button" aria-label="Play or pause">▶</button>
+            <button class="icon-button" id="nextBtn" type="button" aria-label="Next track">›</button>
+          </div>
+          <div class="progress-row">
+            <span id="elapsed">0:00</span>
+            <input id="progress" type="range" min="0" max="100" value="0" aria-label="Playback progress">
+            <span id="duration">0:00</span>
+          </div>
+        </section>
+
+        <section class="queue-panel">
+          <div class="section-bar">
+            <span>QUEUE</span>
+            <strong><span id="queueCount">0</span> TRACKS</strong>
+          </div>
+          <ul id="queueList" class="queue-list"></ul>
+        </section>
+
+        <section class="host-panel">
+          <div class="host-header">
+            <div class="host-avatar">
+              <img id="userAvatar" src="/assets/album-sonora.png" alt="Netease profile avatar">
+            </div>
+            <div class="host-identity">
+              <p><span id="hostLiveDot" class="live-dot" aria-hidden="true"></span><span class="pixel-host-brand" aria-label="Sonora">Sonora</span></p>
+              <span id="socketBadge" hidden>connecting</span>
+            </div>
+            <div class="voice-bars" aria-hidden="true">
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+            </div>
+          </div>
+          <section id="hostScript" class="transcript-panel" aria-live="polite">
+            <div class="transcript-timeline" aria-hidden="true">
+              <span></span>
+            </div>
+            <div class="transcript-lines">
+              <article class="transcript-line active">
+                <span>Sonora • 0:00</span>
+                <p>Type a request and Sonora will build a private radio set.</p>
+              </article>
+            </div>
+          </section>
+          <p id="reasonText" class="reason-text" hidden></p>
+          <p id="segueText" class="segue-text" hidden></p>
+        </section>
+
+        <form id="chatForm" class="chat-dock">
+          <input id="chatInput" name="message" type="text" autocomplete="off" placeholder="">
+          <button type="submit" aria-label="Send">↑</button>
+        </form>
+
+        <footer class="console-footer" hidden>
+          <span id="hostLine">Waiting for a trigger.</span>
+          <span>CONNECTED</span>
+        </footer>
+      </main>
+    </div>
+
+    <aside id="settingsDrawer" class="settings-drawer" aria-label="Settings panel" aria-hidden="true">
+      <div class="drawer-backdrop" id="closeSettingsBackdrop"></div>
+      <section class="drawer-panel">
+        <header class="drawer-header">
+          <div>
+            <p class="eyebrow">CONTROL ROOM</p>
+            <h2>Settings</h2>
+          </div>
+          <button id="closeSettings" class="close-button" type="button" aria-label="Close settings">×</button>
+        </header>
+
+        <div class="drawer-tabs" role="tablist" aria-label="Settings sections">
+          <button class="drawer-tab active" data-settings-tab="profile" type="button">Profile</button>
+          <button class="drawer-tab" data-settings-tab="runtime" type="button">Runtime</button>
+          <button class="drawer-tab" data-settings-tab="plan" type="button">Plan</button>
+        </div>
+
+        <section class="drawer-view active" id="settings-profile">
+          <div class="ncm-card">
+            <img id="ncmAvatar" src="/assets/album-sonora.png" alt="Netease profile avatar">
+            <div>
+              <strong id="ncmName">Not connected</strong>
+              <span id="ncmSyncLine">Netease Cloud Music is waiting for login.</span>
+            </div>
+            <button id="syncNcmTaste" class="secondary-action" type="button">Sync</button>
+          </div>
+          <div class="action-group">
+            <button id="reloadTaste" class="secondary-action muted" type="button">Refresh</button>
+            <button id="saveTaste" class="secondary-action" type="button">Save</button>
+          </div>
+          <label>
+            <span>taste.md</span>
+            <textarea id="tasteText" aria-label="taste.md"></textarea>
+          </label>
+          <label>
+            <span>routines.md</span>
+            <textarea id="routinesText" aria-label="routines.md"></textarea>
+          </label>
+          <label>
+            <span>mood-rules.md</span>
+            <textarea id="moodRulesText" aria-label="mood-rules.md"></textarea>
+          </label>
+          <label>
+            <span>playlists.json</span>
+            <pre id="playlistJson" contenteditable="true" aria-label="playlists.json"></pre>
+          </label>
+        </section>
+
+        <section class="drawer-view" id="settings-runtime">
+          <div class="settings-card">
+            <h3>HTTP Contract</h3>
+            <code>GET /api/now</code>
+            <code>GET /api/taste</code>
+            <code>GET /api/plan/today</code>
+            <code>POST /api/chat</code>
+            <code>WS /stream</code>
+          </div>
+          <dl class="state-list">
+            <div><dt>Status</dt><dd id="debugStatus">idle</dd></div>
+            <div><dt>Track</dt><dd id="debugTrack">-</dd></div>
+            <div><dt>TTS</dt><dd id="debugTts">-</dd></div>
+            <div><dt>Volume</dt><dd id="debugVolume">72</dd></div>
+          </dl>
+          <ul id="eventLog" class="event-log"></ul>
+        </section>
+
+        <section class="drawer-view" id="settings-plan">
+          <ol id="planList" class="plan-list"></ol>
+        </section>
+      </section>
+    </aside>
+
+    <div id="ncmLoginModal" class="login-modal" aria-hidden="true">
+      <div class="login-scrim" id="closeNcmLogin"></div>
+      <section class="login-panel" role="dialog" aria-modal="true" aria-labelledby="ncmLoginTitle">
+        <header>
+          <div>
+            <p class="eyebrow">NETEASE CLOUD MUSIC</p>
+            <h2 id="ncmLoginTitle">Scan to initialize taste</h2>
+          </div>
+          <button id="dismissNcmLogin" class="close-button" type="button" aria-label="Close login">×</button>
+        </header>
+        <div class="qr-frame">
+          <img id="ncmQrImage" alt="Netease login QR code">
+          <span id="ncmQrPlaceholder">QR</span>
+        </div>
+        <p id="ncmLoginStatus" class="login-status">Requesting login QR...</p>
+        <ol class="login-steps">
+          <li>Scan with the Netease Cloud Music app.</li>
+          <li>Confirm login on your phone.</li>
+          <li>Sonora will sync liked music and rewrite taste.md.</li>
+        </ol>
+        <button id="retryNcmLogin" class="secondary-action muted" type="button">New QR</button>
+      </section>
+    </div>
+
+    <audio id="audio" preload="metadata"></audio>
+    <script src="/app.js?v=15" type="module"></script>
+  </body>
+</html>

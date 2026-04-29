@@ -1,0 +1,14 @@
+{
+  "name": "sonora-ai-radio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Personal AI radio PWA with local brain, OpenAI-compatible agent adapter, music provider adapter, TTS cache, HTTP API, and WebSocket stream.",
+  "scripts": {
+    "start": "node server/main.js",
+    "dev": "node server/main.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

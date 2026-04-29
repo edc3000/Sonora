@@ -1,0 +1,13 @@
+.env
+.env.*
+node_modules/
+cache/
+*.mp3
+*.wav
+*.m4a
+*.flac
+state.db
+.DS_Store
+user/ncm-session.json
+user/active-user.json
+user/users/
