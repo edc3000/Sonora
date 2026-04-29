@@ -7,7 +7,7 @@ export class AgentBrain {
   async compute(contextPacket) {
     const candidatePool = await this.buildCandidatePool(contextPacket.fragments);
     const enrichedPacket = enrichContextPacket(contextPacket, candidatePool);
-    const raw = await this.callProvider(enrichedPacket).catch(() => null);
+    const raw = await withTimeout(this.callProvider(enrichedPacket), 18000, null).catch(() => null);
     const parsed = raw ? parseAgentJson(raw) : null;
     const result = parsed || await this.fallback(enrichedPacket.fragments);
     return completeQueue(normalizeResult(result), candidatePool);
@@ -37,7 +37,7 @@ export class AgentBrain {
     const hour = new Date().getHours();
     const recent = new Set((fragments.memory?.recentPlays || []).slice(0, 6).map((play) => `${play.title}-${play.artist}`));
     const recommended = await this.searchPlayableCandidates(fragments);
-    const play = recommended.filter((song) => !recent.has(`${song.title}-${song.artist}`)).slice(0, 3);
+    const play = recommended.filter((song) => !recent.has(`${song.title}-${song.artist}`)).slice(0, 6);
     const slot = hour < 10 ? "morning" : hour < 18 ? "workday" : "night";
     const weather = fragments.environment.weather.label || "local";
     return {
@@ -70,15 +70,15 @@ export class AgentBrain {
     ].filter(Boolean);
 
     for (const seed of seeds) {
-      const candidates = await this.ncm.search(seed).catch(() => []);
+      const candidates = await withTimeout(this.ncm.search(seed), 6000, []).catch(() => []);
       const publicCandidates = candidates.filter((song) => !String(song.id || "").startsWith("local-"));
       if (publicCandidates.length) return publicCandidates;
     }
 
-    return this.ncm.recommend({
+    return withTimeout(this.ncm.recommend({
       mood: fragments.memory?.prefs?.mood,
       hour: new Date().getHours()
-    });
+    }), 6000, []);
   }
 
   async buildCandidatePool(fragments) {
@@ -110,7 +110,7 @@ export class AgentBrain {
 
     const searchTerm = extractSearchTerms(input);
     if (searchTerm) {
-      for (const song of await this.ncm.search(searchTerm).catch(() => [])) add(song, 76, `search seed: ${searchTerm}`);
+      for (const song of await withTimeout(this.ncm.search(searchTerm), 6000, []).catch(() => [])) add(song, 76, `search seed: ${searchTerm}`);
     }
 
     const songSeeds = prioritizeSongSeeds(fragments.musicTaste?.songSeeds || [], input).slice(0, 8);
@@ -118,20 +118,20 @@ export class AgentBrain {
     const [similarGroups, artistTopGroups, artistSearchGroups, daily] = await Promise.all([
       Promise.all(songSeeds.map(async (seed) => ({
         seed,
-        songs: await this.ncm.similarSongs(seed.id).catch(() => [])
+        songs: await withTimeout(this.ncm.similarSongs(seed.id), 6000, []).catch(() => [])
       }))),
       Promise.all(artistSeeds.map(async (artist) => ({
         artist,
-        songs: await this.ncm.artistTopSongs(artist.id).catch(() => [])
+        songs: await withTimeout(this.ncm.artistTopSongs(artist.id), 6000, []).catch(() => [])
       }))),
       Promise.all(artistSeeds.slice(0, 4).map(async (artist) => ({
         artist,
-        songs: await this.ncm.search(`${artist.name} ${searchTerm}`.trim()).catch(() => [])
+        songs: await withTimeout(this.ncm.search(`${artist.name} ${searchTerm}`.trim()), 6000, []).catch(() => [])
       }))),
-      this.ncm.recommend({
+      withTimeout(this.ncm.recommend({
         mood: fragments.memory?.prefs?.mood,
         hour: new Date().getHours()
-      }).catch(() => [])
+      }), 6000, []).catch(() => [])
     ]);
 
     for (const group of similarGroups) {
@@ -174,6 +174,18 @@ function chatCompletionsUrl(openai) {
   return `${baseUrl}/chat/completions`;
 }
 
+function withTimeout(promise, ms, fallback) {
+  let timer = null;
+  return Promise.race([
+    promise,
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(fallback), ms);
+    })
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 function extractSearchTerms(input) {
   return input
     .replace(/播放|来一首|听|歌曲?|音乐|推荐|现在|开一段|电台|适合|工作|今晚|轻一点|的|一首/g, " ")
@@ -186,7 +198,7 @@ function enrichContextPacket(contextPacket, candidatePool) {
     ...contextPacket.fragments,
     selectionPolicy: {
       rule: "Build the play queue from toolResults.candidatePool whenever possible. Preserve candidate id/source/cover/duration fields. Pick tracks that fit userTaste, currentInput, time, and recentPlays; avoid repeats.",
-      queueSize: "3 to 5 tracks",
+      queueSize: "6 tracks",
       introRule: "Every selected track must include an intro written in natural English from the start. Write like a real radio host: mention the song and artist, add one specific detail about style, mood, era, scene, lyric feeling, or artist background, and explain why it fits this set. Keep it under 45 words. Do not write Chinese narration; Chinese song and artist names are allowed only as proper nouns."
     },
     toolResults: {
@@ -232,7 +244,7 @@ function completeQueue(result, candidatePool) {
   }
 
   for (const candidate of candidatePool) {
-    if (selected.length >= 5) break;
+    if (selected.length >= 6) break;
     const key = keyFor(candidate.title, candidate.artist);
     if (!used.has(key)) {
       selected.push(candidate);
@@ -242,7 +254,7 @@ function completeQueue(result, candidatePool) {
 
   return {
     ...result,
-    play: selected.slice(0, 5),
+    play: selected.slice(0, 6),
     reason: result.reason || "Selected from a taste-matched candidate pool built from liked songs, top artists, and current context."
   };
 }

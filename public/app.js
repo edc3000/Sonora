@@ -302,12 +302,12 @@ function bindControls() {
     ambient.ensureContext();
     primeHostAudio();
     if (!state.now?.track) {
-      const next = await postJson("/api/chat", { message: "Start a radio set based on the current time and mood." });
+      const next = await postJson("/api/radio/ensure", { trigger: "play" });
       renderNow(next);
       return;
     }
     const endpoint = state.now.status === "playing" ? "/api/player/pause" : "/api/player/play";
-    renderNow(await postJson(endpoint, {}));
+    renderNow(await postJson(endpoint, { progress: currentPlaybackProgress() }));
   });
 
   refs.nextBtn.addEventListener("click", async () => {
@@ -326,12 +326,25 @@ function bindControls() {
 
   audio.addEventListener("ended", () => handleTrackEnded());
   audio.addEventListener("error", () => showAudioWarning(state.now?.track, "audio error"));
+  audio.addEventListener("timeupdate", () => {
+    if (!state.now?.track || state.now.status !== "playing") return;
+    state.now.progress = currentPlaybackProgress();
+    renderProgress();
+    updateTranscriptProgress();
+  });
+  refs.progress.addEventListener("input", () => seekFromProgressControl({ commit: false }));
+  refs.progress.addEventListener("change", () => seekFromProgressControl({ commit: true }));
   $("reloadTaste").addEventListener("click", loadTaste);
   $("saveTaste").addEventListener("click", saveTaste);
 }
 
 async function loadNow() {
-  renderNow(await getJson("/api/now"));
+  const now = await getJson("/api/now");
+  renderNow(now);
+  if (!now.track || (now.queue?.length || 0) <= 4) {
+    logEvent("station ensure");
+    renderNow(await postJson("/api/radio/ensure", { trigger: "open" }));
+  }
 }
 
 async function loadPlan() {
@@ -545,6 +558,7 @@ function renderNow(now, options = {}) {
   refs.debugTts.textContent = now.ttsUrl || now.ttsError || now.ttsProvider || "-";
   refs.debugVolume.textContent = String(Math.round(audio.volume * 100));
   renderQueue(now.queue || []);
+  syncAudioProgress(track, now.progress);
   renderTranscript(now);
   configureAudio(track, now.status, { preserveHostAudio });
   if (!suppressSequence) sequenceRadio(now);
@@ -605,7 +619,7 @@ function renderTranscript(now = {}) {
 function buildTranscriptPacket(now = {}) {
   const status = now.status || "idle";
   const track = now.track || {};
-  if (status === "playing" && Array.isArray(track.lyricLines) && track.lyricLines.length) {
+  if ((status === "playing" || status === "paused") && Array.isArray(track.lyricLines) && track.lyricLines.length) {
     const cues = track.lyricLines
       .filter((line) => line?.text && Number.isFinite(Number(line.time)))
       .map((line) => ({
@@ -663,11 +677,12 @@ function updateTranscriptProgress() {
   const cues = radio.transcriptCues || [];
   if (!cues.length) return;
   const mode = refs.hostScript.dataset.mode || "intro";
-  const source = mode === "lyrics" ? audio : null;
   const duration = mode === "lyrics"
     ? Number(state.now?.track?.duration || radio.transcriptDuration || 0)
     : radio.transcriptDuration;
-  let time = Number.isFinite(source?.currentTime) ? source.currentTime : 0;
+  let time = mode === "lyrics"
+    ? (state.now?.status === "playing" && Number.isFinite(audio.currentTime) ? audio.currentTime : Number(state.now?.progress || 0))
+    : 0;
   if (mode === "intro") {
     radio.transcriptTime = Math.min(duration || Infinity, Math.max(0, (radio.transcriptTime || 0) + 0.16));
     time = radio.transcriptTime;
@@ -775,6 +790,7 @@ function configureAudio(track, status, { preserveHostAudio = false } = {}) {
   if (track?.url && audio.src !== new URL(track.url, location.href).href) {
     audio.src = track.url;
   }
+  syncAudioProgress(track, state.now?.progress);
   clearInterval(state.tick);
   if (status === "playing") {
     if (track?.url) {
@@ -788,7 +804,7 @@ function configureAudio(track, status, { preserveHostAudio = false } = {}) {
     state.tick = setInterval(() => {
       if (!state.now?.track) return;
       if (state.now.track.url && Number.isFinite(audio.currentTime)) {
-        state.now.progress = Math.floor(audio.currentTime);
+        state.now.progress = currentPlaybackProgress();
       } else {
         state.now.progress = Math.min((state.now.progress || 0) + 1, state.now.track.duration || 0);
       }
@@ -827,7 +843,7 @@ async function sequenceRadio(now) {
   logEvent("host intro");
   await speakText(now.host, now.ttsUrl, { key });
   if (state.now?.track?.id !== now.track.id || state.now.status !== "speaking") return;
-  renderNow(await postJson("/api/player/play", {}));
+  renderNow(await postJson("/api/player/play", { progress: currentPlaybackProgress() }));
 }
 
 async function switchTrack(endpoint, anticipatedTrack) {
@@ -845,7 +861,7 @@ async function switchTrack(endpoint, anticipatedTrack) {
   if (!samePrimedTrack) return;
   await introPromise;
   if (state.now?.track?.id === next.track?.id && state.now.status === "speaking") {
-    renderNow(await postJson("/api/player/play", {}));
+    renderNow(await postJson("/api/player/play", { progress: currentPlaybackProgress() }));
   }
 }
 
@@ -891,17 +907,10 @@ async function handleTrackEnded() {
   renderProgress();
 
   const [nextTrack] = state.now.queue || [];
-  if (!nextTrack) {
-    radio.transitioning = false;
-    renderNow(await postJson("/api/player/pause", {}));
-    logEvent("program paused");
-    return;
-  }
-
   radio.transitioning = true;
   audio.pause();
   ambient.stop();
-  logEvent("host intro");
+  logEvent(nextTrack ? "host intro" : "queue refill");
   const next = await postJson("/api/player/next", {});
   radio.transitioning = false;
   renderNow(next);
@@ -1028,6 +1037,51 @@ function renderProgress() {
   refs.elapsed.textContent = formatTime(progress);
   refs.duration.textContent = formatTime(duration);
   refs.progress.value = duration ? String(Math.round((progress / duration) * 100)) : "0";
+}
+
+function currentPlaybackProgress() {
+  if (state.now?.track?.url && Number.isFinite(audio.currentTime) && audio.currentTime > 0) {
+    return Math.min(audio.currentTime, state.now.track.duration || audio.currentTime);
+  }
+  return Math.min(state.now?.progress || 0, state.now?.track?.duration || Infinity);
+}
+
+function syncAudioProgress(track, progress) {
+  if (!track?.url || !Number.isFinite(Number(progress))) return;
+  const target = Math.min(Math.max(0, Number(progress)), track.duration || Number(progress));
+  if (!Number.isFinite(target) || Math.abs((audio.currentTime || 0) - target) < 0.65) return;
+  try {
+    audio.currentTime = target;
+  } catch {
+    audio.addEventListener("loadedmetadata", () => {
+      try {
+        audio.currentTime = target;
+      } catch {
+        // Some remote streams do not support seeking immediately.
+      }
+    }, { once: true });
+  }
+}
+
+function seekFromProgressControl({ commit = false } = {}) {
+  const duration = state.now?.track?.duration || 0;
+  if (!duration) return;
+  const percent = Math.min(100, Math.max(0, Number(refs.progress.value || 0)));
+  const progress = (percent / 100) * duration;
+  state.now.progress = progress;
+  syncAudioProgress(state.now.track, progress);
+  renderProgress();
+  updateTranscriptProgress();
+
+  if (commit && state.now.status === "paused") {
+    postJson("/api/player/seek", { progress })
+      .then((next) => {
+        if (String(next.track?.id || "") === String(state.now?.track?.id || "")) {
+          renderNow(next, { suppressSequence: true });
+        }
+      })
+      .catch(() => logEvent("seek failed"));
+  }
 }
 
 function logEvent(text) {

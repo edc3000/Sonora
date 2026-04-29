@@ -92,8 +92,11 @@ export class TtsPipeline {
   }
 
   async fetchStepAudio(text, { voiceId = "", instruction = "" } = {}) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25000);
     const response = await fetch(this.tts.url, {
       method: "POST",
+      signal: controller.signal,
       headers: {
         authorization: `Bearer ${this.tts.apiKey}`,
         "content-type": "application/json"
@@ -104,7 +107,7 @@ export class TtsPipeline {
         input: text,
         instruction
       })
-    });
+    }).finally(() => clearTimeout(timeout));
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
       throw new Error(`Step request failed ${response.status}${detail ? `: ${detail.slice(0, 180)}` : ""}`);
@@ -113,8 +116,11 @@ export class TtsPipeline {
   }
 
   async fetchFishAudio(text, { voiceId = "" } = {}) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25000);
     const response = await fetch(this.tts.url, {
       method: "POST",
+      signal: controller.signal,
       headers: {
         authorization: `Bearer ${this.tts.apiKey}`,
         model: this.tts.modelId,
@@ -131,7 +137,7 @@ export class TtsPipeline {
         repetition_penalty: 1.15,
         chunk_length: 200
       })
-    });
+    }).finally(() => clearTimeout(timeout));
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
       throw new Error(`Fish request failed ${response.status}${detail ? `: ${detail.slice(0, 180)}` : ""}`);

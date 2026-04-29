@@ -39,6 +39,10 @@ const context = new ContextBuilder({
 const agent = new AgentBrain({ openai: config.openai, ncm });
 const tts = new TtsPipeline({ cacheDir: config.ttsCacheDir, tts: config.tts });
 const hub = new WebSocketHub();
+const MIN_QUEUE_SIZE = 4;
+const TARGET_QUEUE_SIZE = 6;
+let refillPromise = null;
+let warmQueuePromise = null;
 
 async function readTaste() {
   const activeUserDir = await getActiveNcmUserDir(config.userDir);
@@ -155,14 +159,7 @@ async function runShow({ input = "", trigger = "user", route = null } = {}) {
   await state.appendMessage({ role: "user", content: input || `[${trigger}]` });
   hub.broadcast("host-speaking", { say: "I am organizing the context and queue." });
 
-  const searchResults = input ? await ncm.search(input).catch(() => []) : [];
-  const packet = await context.build({ input, trigger, toolResults: { route, searchResults } });
-  const decision = await agent.compute(packet);
-  const queue = [];
-  for (const track of decision.play) {
-    queue.push(await ncm.hydrateTrack(track));
-  }
-  const preparedQueue = await prepareRadioTracks(queue, decision);
+  const { decision, preparedQueue } = await buildPreparedQueue({ input, trigger, route });
   const [track] = preparedQueue;
 
   await state.update((current) => {
@@ -203,11 +200,172 @@ async function runShow({ input = "", trigger = "user", route = null } = {}) {
   hub.broadcast("host-speaking", { say: now.host, ttsUrl: now.ttsUrl });
   hub.broadcast("now-playing", now);
   hub.broadcast("queue-updated", { queue: now.queue });
+  warmQueueTts({ limit: 2 });
   return now;
+}
+
+async function buildPreparedQueue({ input = "", trigger = "auto", route = null, ttsMode = "first" } = {}) {
+  const searchResults = input ? await ncm.search(input).catch(() => []) : [];
+  const packet = await context.build({ input, trigger, toolResults: { route, searchResults } });
+  const decision = await agent.compute(packet);
+  const selected = fillQueueFromTasteSeeds(decision.play || [], packet.fragments);
+  const queue = [];
+  for (const track of selected) {
+    queue.push(await withTimeout(ncm.hydrateTrack(track), 10000, track));
+  }
+  return {
+    decision,
+    preparedQueue: await prepareRadioTracks(queue, decision, { ttsMode })
+  };
+}
+
+async function ensureRadio({ trigger = "open" } = {}) {
+  const now = state.snapshot.now;
+  const hasTrack = Boolean(now.track);
+  const queueSize = now.queue?.length || 0;
+  if (!hasTrack) {
+    return runShow({
+      input: "Start Sonora as a personal radio station. Build a ready-to-play queue from the user's taste, current time, and recent listening context.",
+      trigger
+    });
+  }
+  if (queueSize <= MIN_QUEUE_SIZE) {
+    await refillQueue({ trigger });
+  }
+  return state.snapshot.now;
+}
+
+async function refillQueue({ trigger = "auto-refill" } = {}) {
+  if (refillPromise) return refillPromise;
+  refillPromise = refillQueueNow({ trigger }).finally(() => {
+    refillPromise = null;
+  });
+  return refillPromise;
+}
+
+async function refillQueueNow({ trigger = "auto-refill" } = {}) {
+  const before = state.snapshot.now;
+  const existing = new Set([
+    before.track,
+    ...(before.queue || []),
+    ...(before.history || [])
+  ].filter(Boolean).map(trackKey));
+  const needed = Math.max(0, TARGET_QUEUE_SIZE - (before.queue?.length || 0));
+  if (!needed) return before;
+
+  const { decision, preparedQueue } = await buildPreparedQueue({
+    input: "Continue the current Sonora radio set with taste-aligned songs. Avoid repeats from the current track, upcoming queue, and recent plays. Keep the flow coherent for a private radio station.",
+    trigger,
+    ttsMode: "none"
+  });
+  const candidates = preparedQueue
+    .filter((track) => {
+      const key = trackKey(track);
+      if (!key || existing.has(key)) return false;
+      existing.add(key);
+      return true;
+    });
+
+  if (!candidates.length) return state.snapshot.now;
+
+  let appendedCount = 0;
+  await state.update((current) => {
+    const liveExisting = new Set([
+      current.now.track,
+      ...(current.now.queue || []),
+      ...(current.now.history || [])
+    ].filter(Boolean).map(trackKey));
+    const liveNeeded = Math.max(0, TARGET_QUEUE_SIZE - (current.now.queue?.length || 0));
+    const additions = candidates
+      .filter((track) => {
+        const key = trackKey(track);
+        if (!key || liveExisting.has(key)) return false;
+        liveExisting.add(key);
+        return true;
+      })
+      .slice(0, liveNeeded);
+
+    appendedCount = additions.length;
+    if (!appendedCount) return current;
+
+    current.now.queue = [...(current.now.queue || []), ...additions].slice(0, TARGET_QUEUE_SIZE);
+    current.now.reason = current.now.reason || decision.reason;
+    current.now.segue = decision.segue || current.now.segue;
+    current.messages.unshift({
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      role: "assistant",
+      content: `Auto-refilled ${appendedCount} tracks for the station.`
+    });
+    current.messages = current.messages.slice(0, 80);
+    return current;
+  });
+  if (!appendedCount) return state.snapshot.now;
+  hub.broadcast("queue-updated", { queue: state.snapshot.now.queue });
+  hub.broadcast("now-playing", state.snapshot.now);
+  warmQueueTts({ limit: 2 });
+  return state.snapshot.now;
+}
+
+function trackKey(track = {}) {
+  if (!track) return "";
+  return String(track.id || `${track.title || ""}::${track.artist || ""}`).toLowerCase();
+}
+
+function fillQueueFromTasteSeeds(tracks = [], fragments = {}) {
+  const selected = [];
+  const used = new Set([
+    state.snapshot.now.track,
+    ...(state.snapshot.now.queue || []),
+    ...(state.snapshot.now.history || [])
+  ].filter(Boolean).map(trackKey));
+
+  const add = (track) => {
+    const key = trackKey(track);
+    if (!track?.title || !track?.artist || !key || used.has(key)) return;
+    selected.push(track);
+    used.add(key);
+  };
+
+  for (const track of tracks) {
+    if (selected.length >= TARGET_QUEUE_SIZE) break;
+    add(track);
+  }
+
+  for (const seed of fragments.musicTaste?.songSeeds || []) {
+    if (selected.length >= TARGET_QUEUE_SIZE) break;
+    add({
+      id: String(seed.id || ""),
+      title: seed.title,
+      artist: seed.artist,
+      source: "netease:liked-seed",
+      url: "",
+      cover: "/assets/album-sonora.png",
+      duration: seed.duration || 240,
+      popularity: seed.popularity
+    });
+  }
+
+  return selected.slice(0, TARGET_QUEUE_SIZE);
+}
+
+function withTimeout(promise, ms, fallback) {
+  let timer = null;
+  return Promise.race([
+    promise,
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(fallback), ms);
+    })
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 async function nextTrack() {
   let trackToPrepare = null;
+  if (!(state.snapshot.now.queue || []).length) {
+    await refillQueue({ trigger: "empty-next" });
+  }
   await state.update((current) => {
     const [next, ...rest] = current.now.queue;
     if (next) {
@@ -268,6 +426,11 @@ async function nextTrack() {
   }
   hub.broadcast("track-ended", state.snapshot.now);
   hub.broadcast("now-playing", state.snapshot.now);
+  const remaining = state.snapshot.now.queue?.length || 0;
+  if (remaining <= MIN_QUEUE_SIZE) {
+    refillQueue({ trigger: "low-watermark" }).catch((error) => console.warn(`Queue refill failed: ${error.message}`));
+  }
+  warmQueueTts({ limit: 2 });
   return state.snapshot.now;
 }
 
@@ -327,13 +490,15 @@ async function previousTrack() {
   }
   hub.broadcast("now-playing", state.snapshot.now);
   hub.broadcast("queue-updated", { queue: state.snapshot.now.queue });
+  warmQueueTts({ limit: 2 });
   return state.snapshot.now;
 }
 
-async function prepareRadioTracks(tracks, decision) {
+async function prepareRadioTracks(tracks, decision, { ttsMode = "first" } = {}) {
   return Promise.all(tracks.map(async (track, index) => {
-    const intro = introForTrack(track, { index, reason: decision.reason });
-    const speech = intro ? await tts.synthesize(intro, tts.optionsForTrack(track)) : { url: "" };
+    const intro = track.intro || introForTrack(track, { index, reason: decision.reason });
+    const shouldSynthesize = intro && (ttsMode === "all" || (ttsMode === "first" && index === 0));
+    const speech = shouldSynthesize ? await tts.synthesize(intro, tts.optionsForTrack(track)) : { url: "" };
     return {
       ...track,
       intro,
@@ -342,6 +507,57 @@ async function prepareRadioTracks(tracks, decision) {
       introTtsError: speech.error || ""
     };
   }));
+}
+
+function warmQueueTts({ limit = 2 } = {}) {
+  if (warmQueuePromise) return warmQueuePromise;
+  warmQueuePromise = warmQueueTtsNow({ limit }).finally(() => {
+    warmQueuePromise = null;
+  });
+  return warmQueuePromise;
+}
+
+async function warmQueueTtsNow({ limit = 2 } = {}) {
+  const targets = (state.snapshot.now.queue || [])
+    .filter((track) => track?.intro && !track.introTtsUrl)
+    .slice(0, limit);
+  if (!targets.length) return state.snapshot.now;
+
+  let changed = false;
+  for (const target of targets) {
+    const key = trackKey(target);
+    const speech = await tts.synthesize(target.intro, tts.optionsForTrack(target));
+    await state.update((current) => {
+      const queueIndex = (current.now.queue || []).findIndex((track) => trackKey(track) === key);
+      if (queueIndex >= 0 && !current.now.queue[queueIndex].introTtsUrl) {
+        current.now.queue[queueIndex] = {
+          ...current.now.queue[queueIndex],
+          introTtsUrl: speech.url,
+          introTtsProvider: speech.provider,
+          introTtsError: speech.error || ""
+        };
+        changed = true;
+      }
+      if (trackKey(current.now.track) === key && !current.now.ttsUrl) {
+        current.now.track = {
+          ...current.now.track,
+          introTtsUrl: speech.url,
+          introTtsProvider: speech.provider,
+          introTtsError: speech.error || ""
+        };
+        current.now.ttsUrl = speech.url;
+        current.now.ttsProvider = speech.provider;
+        current.now.ttsError = speech.error || "";
+        changed = true;
+      }
+      return current;
+    });
+  }
+  if (changed) {
+    hub.broadcast("queue-updated", { queue: state.snapshot.now.queue });
+    hub.broadcast("now-playing", state.snapshot.now);
+  }
+  return state.snapshot.now;
 }
 
 function introForTrack(track, { index = 0, reason = "" } = {}) {
@@ -389,6 +605,25 @@ function englishTrackContext(track = {}) {
   return "It has the kind of melodic detail that rewards close listening while still leaving space for whatever you are doing.";
 }
 
+function isCantoneseTrack(track = {}) {
+  const text = `${track.title || ""} ${track.artist || ""} ${track.album || ""}`.toLowerCase();
+  if (/(粤|粵|廣東|广东|cantonese|cantopop|\(yue\)|（粤）|（粵）|粤语|粵語)/i.test(text)) return true;
+  const cantoneseArtists = [
+    "陈奕迅", "陳奕迅", "eason chan", "张敬轩", "張敬軒", "hins cheung",
+    "谢安琪", "謝安琪", "kay tse", "容祖儿", "容祖兒", "joey yung",
+    "杨千嬅", "楊千嬅", "miriam yeung", "郑秀文", "鄭秀文", "sammi cheng",
+    "王菲", "faye wong", "林忆莲", "林憶蓮", "sandy lam", "卢巧音", "盧巧音",
+    "卫兰", "衛蘭", "janice vidal", "麦浚龙", "麥浚龍", "juno mak",
+    "方皓玟", "charmaine fong", "my little airport", "dear jane", "rubberband",
+    "古巨基", "leo ku", "张学友", "張學友", "jacky cheung", "林家谦", "林家謙",
+    "terence lam", "陈柏宇", "陳柏宇", "jason chan", "薛凯琪", "薛凱琪",
+    "周柏豪", "pakho chau", "林二汶", "at17", "twins", "beyond", "黄耀明", "黃耀明"
+  ];
+  if (cantoneseArtists.some((artist) => text.includes(artist.toLowerCase()))) return true;
+  const traditionalOrCantoneseChars = text.match(/[嘅咗佢哋唔啲喺冇嚟嚿嗰俾畀諗睇聽講會愛無裡裏風開點]/g) || [];
+  return traditionalOrCantoneseChars.length >= 2;
+}
+
 const scheduler = new RadioScheduler({
   runShow,
   broadcast: (type, payload) => {
@@ -415,6 +650,7 @@ const deps = {
   readNcmStatus,
   logoutNcm,
   syncNcmProfileAndTaste,
+  ensureRadio,
   runShow,
   nextTrack,
   previousTrack,

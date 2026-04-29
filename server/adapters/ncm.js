@@ -206,7 +206,7 @@ export class NeteaseCloudMusicApi {
       url: url || "",
       cover: resolved.cover || track.cover || "/assets/album-sonora.png",
       duration: Number(resolved.duration || track.duration || 240),
-      lyric: lyricText || track.lyric || "",
+      lyric: undefined,
       lyricLines: Array.isArray(track.lyricLines) && track.lyricLines.length
         ? track.lyricLines
         : parseLrc(lyricText)
@@ -256,7 +256,12 @@ function parseLrc(lyric = "") {
 }
 
 async function fetchJson(url, options) {
-  const response = await fetch(url, options);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  const response = await fetch(url, {
+    ...(options || {}),
+    signal: options?.signal || controller.signal
+  }).finally(() => clearTimeout(timeout));
   if (!response.ok) throw new Error(`NCM request failed: ${response.status}`);
   return response.json();
 }

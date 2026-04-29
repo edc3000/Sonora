@@ -52,6 +52,10 @@ async function handleApi(request, response, url, deps) {
   if (request.method === "GET" && url.pathname === "/api/plan/today") {
     return sendJson(response, 200, { plan: deps.state.snapshot.plan });
   }
+  if (request.method === "POST" && url.pathname === "/api/radio/ensure") {
+    const body = await readBody(request);
+    return sendJson(response, 200, await deps.ensureRadio({ trigger: body.trigger || "open" }));
+  }
   if (request.method === "POST" && url.pathname === "/api/chat") {
     const body = await readBody(request);
     const route = routeIntent(body.message || "", "user");
@@ -80,8 +84,12 @@ async function handleApi(request, response, url, deps) {
     }));
   }
   if (request.method === "POST" && url.pathname === "/api/player/play") {
+    const body = await readBody(request);
     await deps.state.update((state) => {
       state.now.status = state.now.track ? "playing" : "idle";
+      if (Number.isFinite(Number(body.progress))) {
+        state.now.progress = clampProgress(Number(body.progress), state.now.track?.duration);
+      }
       return state;
     });
     deps.broadcast("now-playing", deps.state.snapshot.now);
@@ -89,12 +97,27 @@ async function handleApi(request, response, url, deps) {
     return sendJson(response, 200, deps.state.snapshot.now);
   }
   if (request.method === "POST" && url.pathname === "/api/player/pause") {
+    const body = await readBody(request);
     await deps.state.update((state) => {
       state.now.status = "paused";
+      if (Number.isFinite(Number(body.progress))) {
+        state.now.progress = clampProgress(Number(body.progress), state.now.track?.duration);
+      }
       return state;
     });
     deps.broadcast("now-playing", deps.state.snapshot.now);
     await sendToMainDevice("pause");
+    return sendJson(response, 200, deps.state.snapshot.now);
+  }
+  if (request.method === "POST" && url.pathname === "/api/player/seek") {
+    const body = await readBody(request);
+    await deps.state.update((state) => {
+      if (Number.isFinite(Number(body.progress))) {
+        state.now.progress = clampProgress(Number(body.progress), state.now.track?.duration);
+      }
+      return state;
+    });
+    deps.broadcast("now-playing", deps.state.snapshot.now);
     return sendJson(response, 200, deps.state.snapshot.now);
   }
   if (request.method === "POST" && url.pathname === "/api/player/next") {
@@ -155,4 +178,9 @@ async function readBody(request) {
 export function sendJson(response, status, payload) {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
   response.end(JSON.stringify(payload));
+}
+
+function clampProgress(progress, duration = 0) {
+  const max = Math.max(0, Number(duration || 0));
+  return Math.min(max || Infinity, Math.max(0, progress));
 }

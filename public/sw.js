@@ -1,5 +1,5 @@
-const CACHE = "sonora-v15";
-const ASSETS = ["/", "/index.html", "/styles.css?v=15", "/app.js?v=15", "/manifest.json", "/assets/album-sonora.png"];
+const CACHE = "sonora-v18";
+const ASSETS = ["/", "/index.html", "/styles.css?v=18", "/app.js?v=18", "/manifest.json", "/assets/album-sonora.png"];
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
