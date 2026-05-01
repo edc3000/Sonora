@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+export const TTS_STYLE_VERSION = "soft-story-radio-v1";
+
 export class TtsPipeline {
   constructor({ cacheDir, tts = {} }) {
     this.cacheDir = cacheDir;
@@ -55,15 +57,22 @@ export class TtsPipeline {
 
   optionsForTrack(track) {
     const provider = this.resolveProvider();
+    const cantonese = isCantoneseTrack(track);
     return {
       provider,
-      voiceId: this.tts.englishMaleVoiceId || this.tts.voiceId,
-      instruction: instructionForTrack(track)
+      voiceId: cantonese
+        ? (this.tts.cantoneseFemaleVoiceId || this.tts.voiceId)
+        : (this.tts.englishMaleVoiceId || this.tts.voiceId),
+      instruction: instructionForTrack(track, { cantonese })
     };
   }
 
   voiceForTrack(track) {
     return this.optionsForTrack(track).voiceId || "";
+  }
+
+  styleVersion() {
+    return TTS_STYLE_VERSION;
   }
 
   resolveProvider() {
@@ -132,10 +141,10 @@ export class TtsPipeline {
         format: "mp3",
         normalize: true,
         latency: "normal",
-        temperature: 0.6,
-        top_p: 0.7,
-        repetition_penalty: 1.15,
-        chunk_length: 200
+        temperature: 0.48,
+        top_p: 0.62,
+        repetition_penalty: 1.08,
+        chunk_length: 160
       })
     }).finally(() => clearTimeout(timeout));
     if (!response.ok) {
@@ -159,10 +168,19 @@ function detectProvider(url) {
   }
 }
 
-function instructionForTrack(track = {}) {
+function instructionForTrack(track = {}, { cantonese = false } = {}) {
   const title = track.title ? `“${track.title}”` : "the next song";
   const artist = track.artist ? ` by ${track.artist}` : "";
-  return `Warm male English radio host. Speak only in English with a calm, intimate music-program tone. Make it feel like a real radio introduction for ${title}${artist}: specific, knowledgeable, human, and under 18 seconds.`;
+  const hostVoice = cantonese
+    ? "a gentle Cantonese female late-night radio host voice, while speaking the provided English text naturally"
+    : "a warm male late-night English radio host voice";
+  return [
+    `Use ${hostVoice}.`,
+    `Delivery should be soft, unhurried, intimate, and story-led, like a real music radio host introducing ${title}${artist} after midnight.`,
+    "Speak slightly slower than normal, with relaxed breath, a low-volume conversational tone, and small natural pauses between clauses.",
+    "Avoid hype, sales energy, exaggerated drama, robotic cadence, or reading too quickly.",
+    "Keep the feeling reflective, cinematic, knowledgeable, and human; let the last sentence land gently before the music takes over."
+  ].join(" ");
 }
 
 function ttsResult({ filePath, hash, provider, voiceId, cached }) {

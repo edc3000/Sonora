@@ -1483,8 +1483,8 @@ function getSpeechProfile(text) {
   return {
     lang,
     voice: chooseSpeechVoice(lang),
-    rate: lang === "zh-CN" ? 0.9 : 0.88,
-    pitch: lang === "zh-CN" ? 0.96 : 0.86
+    rate: lang === "zh-CN" ? 0.78 : 0.76,
+    pitch: lang === "zh-CN" ? 0.92 : 0.82
   };
 }
 

@@ -234,6 +234,9 @@ async function ensureRadio({ trigger = "open" } = {}) {
       trigger
     });
   }
+  if (now.track?.intro && !hasFreshIntroTts(now.track)) {
+    await refreshCurrentIntroTts(now.track);
+  }
   if (queueSize <= MIN_QUEUE_SIZE) {
     await refillQueue({ trigger });
   }
@@ -391,9 +394,9 @@ async function nextTrack() {
       next.intro = next.intro || introForTrack(next, { index: 0, reason: current.now.reason });
       current.now.host = next.intro;
       current.now.introId = crypto.randomUUID();
-      current.now.ttsUrl = next.introTtsUrl || "";
-      current.now.ttsProvider = next.introTtsProvider || "";
-      current.now.ttsError = next.introTtsError || "";
+      current.now.ttsUrl = hasFreshIntroTts(next) ? next.introTtsUrl : "";
+      current.now.ttsProvider = hasFreshIntroTts(next) ? next.introTtsProvider : "";
+      current.now.ttsError = hasFreshIntroTts(next) ? next.introTtsError : "";
       trackToPrepare = next;
       current.plays.unshift({
         id: crypto.randomUUID(),
@@ -413,7 +416,7 @@ async function nextTrack() {
     }
     return current;
   });
-  if (trackToPrepare && (!trackToPrepare.introTtsUrl || !trackToPrepare.lyricLines?.length)) {
+  if (trackToPrepare && (!hasFreshIntroTts(trackToPrepare) || !trackToPrepare.lyricLines?.length)) {
     if (!trackToPrepare.lyricLines?.length) {
       trackToPrepare = await ncm.hydrateTrack(trackToPrepare);
       await state.update((current) => {
@@ -423,13 +426,14 @@ async function nextTrack() {
         return current;
       });
     }
-    if (trackToPrepare && !trackToPrepare.introTtsUrl) {
+    if (trackToPrepare && !hasFreshIntroTts(trackToPrepare)) {
       const speech = await tts.synthesize(trackToPrepare.intro, tts.optionsForTrack(trackToPrepare));
       await state.update((current) => {
         if (String(current.now.track?.id) === String(trackToPrepare.id)) {
           current.now.track.introTtsUrl = speech.url;
           current.now.track.introTtsProvider = speech.provider;
           current.now.track.introTtsError = speech.error || "";
+          current.now.track.introTtsStyle = speech.url ? tts.styleVersion() : "";
           current.now.ttsUrl = speech.url;
           current.now.ttsProvider = speech.provider;
           current.now.ttsError = speech.error || "";
@@ -461,9 +465,9 @@ async function previousTrack() {
       previous.intro = previous.intro || introForTrack(previous, { index: 0, reason: current.now.reason });
       current.now.host = previous.intro;
       current.now.introId = crypto.randomUUID();
-      current.now.ttsUrl = previous.introTtsUrl || "";
-      current.now.ttsProvider = previous.introTtsProvider || "";
-      current.now.ttsError = previous.introTtsError || "";
+      current.now.ttsUrl = hasFreshIntroTts(previous) ? previous.introTtsUrl : "";
+      current.now.ttsProvider = hasFreshIntroTts(previous) ? previous.introTtsProvider : "";
+      current.now.ttsError = hasFreshIntroTts(previous) ? previous.introTtsError : "";
       trackToPrepare = previous;
     } else {
       current.now.status = current.now.track ? "paused" : "idle";
@@ -477,7 +481,7 @@ async function previousTrack() {
     }
     return current;
   });
-  if (trackToPrepare && (!trackToPrepare.introTtsUrl || !trackToPrepare.lyricLines?.length)) {
+  if (trackToPrepare && (!hasFreshIntroTts(trackToPrepare) || !trackToPrepare.lyricLines?.length)) {
     if (!trackToPrepare.lyricLines?.length) {
       trackToPrepare = await ncm.hydrateTrack(trackToPrepare);
       await state.update((current) => {
@@ -487,13 +491,14 @@ async function previousTrack() {
         return current;
       });
     }
-    if (trackToPrepare && !trackToPrepare.introTtsUrl) {
+    if (trackToPrepare && !hasFreshIntroTts(trackToPrepare)) {
       const speech = await tts.synthesize(trackToPrepare.intro, tts.optionsForTrack(trackToPrepare));
       await state.update((current) => {
         if (String(current.now.track?.id) === String(trackToPrepare.id)) {
           current.now.track.introTtsUrl = speech.url;
           current.now.track.introTtsProvider = speech.provider;
           current.now.track.introTtsError = speech.error || "";
+          current.now.track.introTtsStyle = speech.url ? tts.styleVersion() : "";
           current.now.ttsUrl = speech.url;
           current.now.ttsProvider = speech.provider;
           current.now.ttsError = speech.error || "";
@@ -525,7 +530,8 @@ async function refreshCurrentTrackAudio() {
       intro: current.now.track.intro || refreshed.intro,
       introTtsUrl: current.now.track.introTtsUrl || refreshed.introTtsUrl || "",
       introTtsProvider: current.now.track.introTtsProvider || refreshed.introTtsProvider || "",
-      introTtsError: current.now.track.introTtsError || refreshed.introTtsError || ""
+      introTtsError: current.now.track.introTtsError || refreshed.introTtsError || "",
+      introTtsStyle: current.now.track.introTtsStyle || refreshed.introTtsStyle || ""
     };
     return current;
   });
@@ -607,6 +613,30 @@ async function patchTrackAudioUrl(id, url) {
   });
 }
 
+function hasFreshIntroTts(track = {}) {
+  return Boolean(track?.introTtsUrl && track?.introTtsStyle === tts.styleVersion());
+}
+
+async function refreshCurrentIntroTts(track) {
+  const speech = await tts.synthesize(track.intro, tts.optionsForTrack(track));
+  await state.update((current) => {
+    if (String(current.now.track?.id || "") !== String(track.id || "")) return current;
+    current.now.track = {
+      ...current.now.track,
+      introTtsUrl: speech.url,
+      introTtsProvider: speech.provider,
+      introTtsError: speech.error || "",
+      introTtsStyle: speech.url ? tts.styleVersion() : ""
+    };
+    current.now.ttsUrl = speech.url;
+    current.now.ttsProvider = speech.provider;
+    current.now.ttsError = speech.error || "";
+    return current;
+  });
+  hub.broadcast("now-playing", state.snapshot.now);
+  return state.snapshot.now;
+}
+
 async function prepareRadioTracks(tracks, decision, { ttsMode = "first" } = {}) {
   return Promise.all(tracks.map(async (track, index) => {
     const intro = track.intro || introForTrack(track, { index, reason: decision.reason });
@@ -617,7 +647,8 @@ async function prepareRadioTracks(tracks, decision, { ttsMode = "first" } = {}) 
       intro,
       introTtsUrl: speech.url,
       introTtsProvider: speech.provider,
-      introTtsError: speech.error || ""
+      introTtsError: speech.error || "",
+      introTtsStyle: speech.url ? tts.styleVersion() : ""
     };
   }));
 }
@@ -632,7 +663,7 @@ function warmQueueTts({ limit = 2 } = {}) {
 
 async function warmQueueTtsNow({ limit = 2 } = {}) {
   const targets = (state.snapshot.now.queue || [])
-    .filter((track) => track?.intro && !track.introTtsUrl)
+    .filter((track) => track?.intro && !hasFreshIntroTts(track))
     .slice(0, limit);
   if (!targets.length) return state.snapshot.now;
 
@@ -642,21 +673,23 @@ async function warmQueueTtsNow({ limit = 2 } = {}) {
     const speech = await tts.synthesize(target.intro, tts.optionsForTrack(target));
     await state.update((current) => {
       const queueIndex = (current.now.queue || []).findIndex((track) => trackKey(track) === key);
-      if (queueIndex >= 0 && !current.now.queue[queueIndex].introTtsUrl) {
+      if (queueIndex >= 0 && !hasFreshIntroTts(current.now.queue[queueIndex])) {
         current.now.queue[queueIndex] = {
           ...current.now.queue[queueIndex],
           introTtsUrl: speech.url,
           introTtsProvider: speech.provider,
-          introTtsError: speech.error || ""
+          introTtsError: speech.error || "",
+          introTtsStyle: speech.url ? tts.styleVersion() : ""
         };
         changed = true;
       }
-      if (trackKey(current.now.track) === key && !current.now.ttsUrl) {
+      if (trackKey(current.now.track) === key && !hasFreshIntroTts(current.now.track)) {
         current.now.track = {
           ...current.now.track,
           introTtsUrl: speech.url,
           introTtsProvider: speech.provider,
-          introTtsError: speech.error || ""
+          introTtsError: speech.error || "",
+          introTtsStyle: speech.url ? tts.styleVersion() : ""
         };
         current.now.ttsUrl = speech.url;
         current.now.ttsProvider = speech.provider;
