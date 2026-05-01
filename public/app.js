@@ -14,6 +14,7 @@ const $ = (id) => document.getElementById(id);
 const audio = $("audio");
 const hostAudio = $("hostAudio") || new Audio();
 const silentAudioSrc = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=";
+const INTRO_MUSIC_START_SECONDS = 5;
 let lastSpokenIntroKey = "";
 let lastAudioWarning = "";
 const radio = {
@@ -31,6 +32,7 @@ const radio = {
   isSeeking: false,
   audioRecoveryKey: "",
   seekReleaseTimer: null,
+  musicStartTimer: null,
   coverRefreshKey: "",
   progressPointerActive: false,
   progressPointerHandled: false
@@ -347,22 +349,25 @@ function bindControls() {
     updatePlayButton();
   });
   audio.addEventListener("timeupdate", () => {
-    if (!state.now?.track || radio.programPhase !== "track" || radio.isSeeking) return;
+    if (!state.now?.track || !isMediaPlaying(audio) || radio.isSeeking) return;
     state.now.progress = currentPlaybackProgress();
     renderProgress();
     updateTranscriptProgress();
   });
   hostAudio.addEventListener("play", () => {
-    if (radio.programPhase === "intro") radio.isProgramPlaying = true;
+    if (isHostPhaseActive()) radio.isProgramPlaying = true;
     updatePlayButton();
   });
   hostAudio.addEventListener("pause", () => {
-    if (radio.programPhase === "intro" && !radio.isSeeking) radio.isProgramPlaying = false;
+    if (isHostPhaseActive() && !radio.isSeeking && !isMediaPlaying(audio)) radio.isProgramPlaying = false;
     updatePlayButton();
   });
   hostAudio.addEventListener("timeupdate", () => {
-    if (radio.programPhase !== "intro" || radio.isSeeking) return;
+    if (!isHostPhaseActive() || radio.isSeeking) return;
     radio.transcriptTime = introPlaybackTime();
+    if (radio.transcriptTime >= musicStartOffset() && !isMediaPlaying(audio)) {
+      startTrackPlaybackAtProgramProgress(radio.transcriptTime, { notify: false });
+    }
     renderProgress();
     updateTranscriptProgress();
   });
@@ -734,7 +739,7 @@ function renderTranscript(now = {}) {
 function buildTranscriptPacket(now = {}) {
   const status = now.status || "idle";
   const track = now.track || {};
-  const pausedInIntro = status === "paused" && radio.programPhase === "intro";
+  const pausedInIntro = status === "paused" && isHostPhaseActive();
   if (!pausedInIntro && (status === "playing" || status === "paused") && Array.isArray(track.lyricLines) && track.lyricLines.length) {
     const cues = track.lyricLines
       .filter((line) => line?.text && Number.isFinite(Number(line.time)))
@@ -906,9 +911,11 @@ function isMediaPlaying(element) {
 }
 
 function isProgramActuallyPlaying() {
-  if (radio.programPhase === "intro") return isMediaPlaying(hostAudio);
-  if (radio.programPhase === "track") return isMediaPlaying(audio);
-  return false;
+  return isMediaPlaying(hostAudio) || isMediaPlaying(audio);
+}
+
+function isHostPhaseActive() {
+  return radio.programPhase === "intro" || radio.programPhase === "overlap";
 }
 
 function isProgramRunning() {
@@ -927,6 +934,37 @@ function programTimeFromControl() {
   const current = Number(refs.progress.value);
   if (Number.isFinite(current)) return Math.min(duration || current, Math.max(0, current));
   return Math.min(duration || Infinity, Math.max(0, currentProgramProgress()));
+}
+
+function musicStartOffset() {
+  return INTRO_MUSIC_START_SECONDS;
+}
+
+function trackProgressForProgramProgress(progress) {
+  const target = Math.max(0, Number(progress || 0) - musicStartOffset());
+  return Math.min(target, trackDuration() || target);
+}
+
+function introActiveAtProgramProgress(progress) {
+  return Number(progress || 0) < introDuration();
+}
+
+function trackActiveAtProgramProgress(progress) {
+  return Number(progress || 0) >= musicStartOffset() && trackProgressForProgramProgress(progress) < (trackDuration() || Infinity);
+}
+
+function phaseForProgramProgress(progress) {
+  const introActive = introActiveAtProgramProgress(progress);
+  const trackActive = trackActiveAtProgramProgress(progress);
+  if (introActive && trackActive) return "overlap";
+  if (introActive) return "intro";
+  if (trackActive) return "track";
+  return "track";
+}
+
+function clearMusicStartTimer() {
+  clearTimeout(radio.musicStartTimer);
+  radio.musicStartTimer = null;
 }
 
 function hasPlayableAudio(track) {
@@ -979,7 +1017,7 @@ function configureAudio(track, status, { preserveHostAudio = false } = {}) {
       } else {
         state.now.progress = Math.min((state.now.progress || 0) + 1, trackDuration() || 0);
       }
-      if (state.now.progress >= (trackDuration() || 0)) handleTrackEnded();
+      if (currentProgramProgress() >= programDuration() - 0.15) handleTrackEnded();
       renderProgress();
       updateTranscriptProgress();
     }, 1000);
@@ -1046,102 +1084,181 @@ async function sequenceRadio(now) {
   radio.isProgramPlaying = true;
   updatePlayButton();
   logEvent("host intro");
+  scheduleTrackStart(0);
   await speakText(now.host, now.ttsUrl, { key });
   if (state.now?.track?.id !== now.track.id || state.now.status !== "speaking") return;
+  if (!isMediaPlaying(audio) && currentProgramProgress() < musicStartOffset()) {
+    scheduleTrackStart(currentProgramProgress());
+    return;
+  }
   radio.programPhase = "track";
   radio.isProgramPlaying = true;
-  renderNow(await postJson("/api/player/play", { progress: 0 }));
+  renderNow(await postJson("/api/player/play", { progress: currentPlaybackProgress() }), {
+    suppressSequence: true,
+    preservePhase: true
+  });
 }
 
 async function toggleProgramPlayback() {
   if (!state.now?.track) return;
 
   if (state.now?.status !== "paused" && isProgramActuallyPlaying()) {
+    const progress = currentProgramProgress();
     radio.isProgramPlaying = false;
-    if (radio.programPhase === "intro") {
-      radio.transcriptTime = introPlaybackTime();
-      hostAudio.pause();
-      if ("speechSynthesis" in window) window.speechSynthesis.pause();
-      renderNow(await postJson("/api/player/pause", { progress: 0 }), {
-        preserveHostAudio: true,
-        suppressSequence: true,
-        preservePhase: true
-      });
-    } else {
-      radio.programPhase = "track";
-      audio.pause();
-      renderNow(await postJson("/api/player/pause", { progress: currentPlaybackProgress() }), {
-        suppressSequence: true,
-        preservePhase: true
-      });
-    }
+    clearMusicStartTimer();
+    radio.transcriptTime = Math.min(progress, introDuration());
+    hostAudio.pause();
+    audio.pause();
+    if ("speechSynthesis" in window) window.speechSynthesis.pause();
+    renderNow(await postJson("/api/player/pause", { progress: trackProgressForProgramProgress(progress) }), {
+      preserveHostAudio: true,
+      suppressSequence: true,
+      preservePhase: true
+    });
+    refs.progress.value = String(progress);
+    renderProgress();
+    updateTranscriptProgress();
     updatePlayButton();
     return;
   }
 
   const target = programTimeFromControl();
-  const intro = introDuration();
-  if (target < intro) {
-    await resumeIntroFrom(target);
-    return;
-  }
+  await resumeProgramFrom(target);
+}
 
-  const trackProgress = Math.min(target - intro, trackDuration() || 0);
-  radio.programPhase = "track";
-  radio.isProgramPlaying = true;
-  hostAudio.pause();
-  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-  syncAudioProgress(state.now.track, trackProgress, { force: true });
-  renderNow(await postJson("/api/player/play", { progress: trackProgress }), {
-    preservePhase: true
-  });
+async function resumeProgramFrom(progress = 0) {
+  playProgramFrom(progress);
 }
 
 async function resumeIntroFrom(progress = 0) {
-  const target = Math.max(0, Number(progress || 0));
-  radio.programPhase = "intro";
-  radio.transcriptTime = target;
-  radio.pendingIntroSeek = target;
+  playProgramFrom(progress);
+}
+
+function playProgramFrom(progress = 0) {
+  const duration = programDuration();
+  const target = Math.min(duration || Number(progress || 0), Math.max(0, Number(progress || 0)));
+  const phase = phaseForProgramProgress(target);
+  const introActive = introActiveAtProgramProgress(target);
+  const trackActive = trackActiveAtProgramProgress(target);
+
+  clearMusicStartTimer();
+  radio.programPhase = phase;
+  radio.transcriptTime = Math.min(target, introDuration());
+  radio.pendingIntroSeek = radio.transcriptTime;
   radio.isProgramPlaying = true;
-  audio.pause();
-  if ("speechSynthesis" in window) window.speechSynthesis.resume();
+  state.now.progress = trackProgressForProgramProgress(target);
+  refs.progress.value = String(target);
 
-  renderNow({ ...state.now, status: "speaking", progress: 0 }, {
-    preserveHostAudio: true,
-    suppressSequence: true,
-    preservePhase: true
-  });
-
-  if (hostAudio.src && hostAudio.src.includes("/tts/")) {
-    seekHostIntro(target);
-    try {
-      await hostAudio.play();
-      radio.isProgramPlaying = true;
-      updatePlayButton();
-      postJson("/api/player/seek", { progress: 0, status: "speaking", silent: true }).catch(() => logEvent("seek failed"));
-      return;
-    } catch {
-      // Fall through to a fresh intro playback below.
-    }
+  if (introActive) {
+    startHostIntroPlayback(radio.transcriptTime);
+  } else {
+    hostAudio.pause();
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   }
 
-  playIntroFrom(target);
+  if (trackActive) {
+    startTrackPlaybackAtProgramProgress(target, { notify: !introActive });
+  } else {
+    audio.pause();
+    scheduleTrackStart(target);
+  }
+
+  renderTranscript({
+    ...state.now,
+    status: introActive ? "speaking" : "playing",
+    progress: state.now.progress
+  });
+  renderProgress();
+  updateTranscriptProgress();
+  updatePlayButton();
+}
+
+function startHostIntroPlayback(progress = 0) {
+  if (!state.now?.track) return;
+  const hostText = state.now.host || state.now.track?.intro || "";
+  if (!hostText) return;
+  const trackId = String(state.now.track.id || "");
+  const key = state.now.introId || `intro:${trackId}:${hostText}:${state.now.ttsUrl || ""}`;
+  radio.pendingIntroSeek = Math.max(0, Number(progress || 0));
+  seekHostIntro(radio.pendingIntroSeek);
+  radio.introKey = "";
+  lastSpokenIntroKey = "";
+  speakText(hostText, state.now.ttsUrl, { force: true, key })
+    .then(() => handleHostIntroEnded(trackId))
+    .catch(() => handleHostIntroEnded(trackId));
+}
+
+async function handleHostIntroEnded(trackId) {
+  if (String(state.now?.track?.id || "") !== String(trackId || "")) return;
+  radio.transcriptTime = introDuration();
+  if (!radio.isProgramPlaying && !isMediaPlaying(audio)) return;
+  if (!isMediaPlaying(audio) && currentProgramProgress() < musicStartOffset()) {
+    scheduleTrackStart(currentProgramProgress());
+    return;
+  }
+  radio.programPhase = "track";
+  if (isMediaPlaying(audio)) {
+    const progress = currentPlaybackProgress();
+    state.now.progress = progress;
+    try {
+      const next = await postJson("/api/player/play", { progress });
+      if (String(next.track?.id || "") === String(state.now?.track?.id || "")) {
+        renderNow(next, {
+          suppressSequence: true,
+          preservePhase: true
+        });
+      }
+    } catch {
+      logEvent("play sync failed");
+    }
+  }
+  renderProgress();
+  updateTranscriptProgress();
+  updatePlayButton();
+}
+
+function scheduleTrackStart(programProgress = 0) {
+  clearMusicStartTimer();
+  if (!state.now?.track || !hasPlayableAudio(state.now.track)) return;
+  const target = Math.max(0, Number(programProgress || 0));
+  const delay = Math.max(0, musicStartOffset() - target);
+  if (delay <= 0) {
+    startTrackPlaybackAtProgramProgress(target, { notify: false });
+    return;
+  }
+  radio.musicStartTimer = setTimeout(() => {
+    startTrackPlaybackAtProgramProgress(musicStartOffset(), { notify: false });
+  }, delay * 1000);
+}
+
+function startTrackPlaybackAtProgramProgress(programProgress = musicStartOffset(), { notify = false } = {}) {
+  if (!state.now?.track || !hasPlayableAudio(state.now.track)) return;
+  const trackProgress = trackProgressForProgramProgress(programProgress);
+  state.now.progress = trackProgress;
+  syncAudioProgress(state.now.track, trackProgress, { force: true });
+  if (introActiveAtProgramProgress(programProgress)) {
+    radio.programPhase = "overlap";
+  } else {
+    radio.programPhase = "track";
+  }
+  audio.play()
+    .then(() => {
+      radio.audioRecoveryKey = "";
+      radio.isProgramPlaying = true;
+      updatePlayButton();
+    })
+    .catch(() => {
+      radio.isProgramPlaying = false;
+      updatePlayButton();
+      handleAudioFailure(state.now.track, "audio unavailable");
+    });
+  if (notify) {
+    postJson("/api/player/play", { progress: trackProgress }).catch(() => logEvent("play sync failed"));
+  }
 }
 
 function playIntroFrom(progress = 0) {
-  radio.programPhase = "intro";
-  radio.transcriptTime = Math.max(0, progress);
-  radio.pendingIntroSeek = radio.transcriptTime;
-  radio.introKey = "";
-  lastSpokenIntroKey = "";
-  radio.isProgramPlaying = true;
-  hostAudio.pause();
-  audio.pause();
-  updatePlayButton();
-  renderNow({ ...state.now, status: "speaking", progress: 0 }, {
-    preserveHostAudio: true,
-    preservePhase: true
-  });
+  playProgramFrom(progress);
 }
 
 async function switchTrack(endpoint, anticipatedTrack) {
@@ -1157,10 +1274,18 @@ async function switchTrack(endpoint, anticipatedTrack) {
     suppressSequence: samePrimedTrack
   });
   if (!samePrimedTrack) return;
+  scheduleTrackStart(0);
   await introPromise;
   if (state.now?.track?.id === next.track?.id && state.now.status === "speaking") {
+    if (!isMediaPlaying(audio) && currentProgramProgress() < musicStartOffset()) {
+      scheduleTrackStart(currentProgramProgress());
+      return;
+    }
     radio.programPhase = "track";
-    renderNow(await postJson("/api/player/play", { progress: 0 }));
+    renderNow(await postJson("/api/player/play", { progress: currentPlaybackProgress() }), {
+      suppressSequence: true,
+      preservePhase: true
+    });
   }
 }
 
@@ -1204,6 +1329,7 @@ function isPrimedIntroFor(now) {
 
 async function handleTrackEnded() {
   if (!state.now?.track || radio.transitioning) return;
+  clearMusicStartTimer();
   clearInterval(state.tick);
   state.now.progress = trackDuration() || state.now.progress || 0;
   renderProgress();
@@ -1211,6 +1337,7 @@ async function handleTrackEnded() {
   const [nextTrack] = state.now.queue || [];
   radio.transitioning = true;
   audio.pause();
+  hostAudio.pause();
   ambient.stop();
   logEvent(nextTrack ? "host intro" : "queue refill");
   const next = await postJson("/api/player/next", {});
@@ -1406,7 +1533,7 @@ function introDuration() {
 }
 
 function programDuration() {
-  return introDuration() + trackDuration();
+  return Math.max(introDuration(), musicStartOffset() + trackDuration());
 }
 
 function introPlaybackTime() {
@@ -1438,9 +1565,19 @@ function trackDuration() {
 }
 
 function currentProgramProgress() {
-  const intro = introDuration();
-  if (radio.programPhase === "intro" || state.now?.status === "speaking") return introPlaybackTime();
-  return intro + currentPlaybackProgress();
+  const candidates = [];
+  if (isHostPhaseActive() || state.now?.status === "speaking" || isMediaPlaying(hostAudio)) {
+    candidates.push(introPlaybackTime());
+  }
+  if (audio.src && (isMediaPlaying(audio) || radio.programPhase === "track" || radio.programPhase === "overlap")) {
+    candidates.push(musicStartOffset() + currentPlaybackProgress());
+  }
+  if (!candidates.length) {
+    const controlValue = Number(refs.progress?.value);
+    if (Number.isFinite(controlValue) && controlValue > 0) candidates.push(controlValue);
+    else candidates.push(radio.transcriptTime || musicStartOffset() + Number(state.now?.progress || 0));
+  }
+  return Math.min(programDuration() || Infinity, Math.max(0, ...candidates));
 }
 
 function syncAudioProgress(track, progress, { force = false } = {}) {
@@ -1537,64 +1674,54 @@ async function seekToProgramTime(targetProgress, { commit = false } = {}) {
   radio.isSeeking = true;
   const progress = Math.min(duration, Math.max(0, Number(targetProgress || 0)));
   refs.progress.value = String(progress);
-  const intro = introDuration();
+  const introActive = introActiveAtProgramProgress(progress);
+  const trackActive = trackActiveAtProgramProgress(progress);
+  const trackProgress = trackProgressForProgramProgress(progress);
   const wasRunning = isProgramRunning();
 
   try {
-    if (progress < intro) {
-      radio.programPhase = "intro";
-      radio.transcriptTime = progress;
-      radio.pendingIntroSeek = progress;
-      state.now.progress = 0;
-      audio.pause();
-      seekHostIntro(progress);
-      renderTranscript({ ...state.now, status: wasRunning ? "speaking" : "paused", progress: 0 });
-      renderProgress();
-      updateTranscriptProgress();
+    radio.programPhase = phaseForProgramProgress(progress);
+    radio.transcriptTime = Math.min(progress, introDuration());
+    radio.pendingIntroSeek = radio.transcriptTime;
+    state.now.progress = trackProgress;
 
-      if (commit) {
-        if (wasRunning) {
-          playIntroFrom(progress);
-          postJson("/api/player/seek", { progress: 0, status: "speaking", silent: true }).catch(() => logEvent("seek failed"));
-        } else {
-          hostAudio.pause();
-          radio.isProgramPlaying = false;
-          const next = await postJson("/api/player/seek", { progress: 0, status: "paused", silent: true });
-          renderNow({ ...next, status: "paused", progress: 0 }, {
-            preserveHostAudio: true,
-            suppressSequence: true,
-            preservePhase: true
-          });
-        }
-      }
-      return;
+    if (introActive) {
+      seekHostIntro(progress);
+    } else {
+      hostAudio.pause();
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     }
 
-    const trackProgress = Math.min(progress - intro, trackDuration() || 0);
-    radio.programPhase = "track";
-    radio.transcriptTime = intro;
-    state.now.progress = trackProgress;
-    hostAudio.pause();
-    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-    syncAudioProgress(state.now.track, trackProgress, { force: true });
-    renderTranscript({ ...state.now, status: wasRunning ? "playing" : "paused", progress: trackProgress });
+    if (trackActive) {
+      syncAudioProgress(state.now.track, trackProgress, { force: true });
+    } else {
+      audio.pause();
+    }
+
+    renderTranscript({
+      ...state.now,
+      status: introActive ? (wasRunning ? "speaking" : "paused") : (wasRunning ? "playing" : "paused"),
+      progress: trackProgress
+    });
     renderProgress();
     updateTranscriptProgress();
 
     if (commit) {
       if (wasRunning) {
-        radio.isProgramPlaying = true;
-        renderNow(await postJson("/api/player/play", { progress: trackProgress }), {
-          preservePhase: true
-        });
+        playProgramFrom(progress);
       } else {
+        clearMusicStartTimer();
+        hostAudio.pause();
+        audio.pause();
         radio.isProgramPlaying = false;
         const next = await postJson("/api/player/seek", { progress: trackProgress, status: "paused", silent: true });
         if (String(next.track?.id || "") === String(state.now?.track?.id || "")) {
-          renderNow({ ...next, status: "paused" }, {
+          renderNow({ ...next, status: "paused", progress: trackProgress }, {
+            preserveHostAudio: true,
             suppressSequence: true,
             preservePhase: true
           });
+          refs.progress.value = String(progress);
         }
       }
     }
