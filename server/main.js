@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { config } from "./config.js";
+import { config, readRuntimeSettings, saveRuntimeSettings } from "./config.js";
 import { StateStore } from "./state.js";
 import { NeteaseCloudMusicApi } from "./adapters/ncm.js";
 import { AgentBrain } from "./agent.js";
@@ -789,6 +789,12 @@ const deps = {
   state,
   publicDir: config.publicDir,
   ttsCacheDir: config.ttsCacheDir,
+  readSettings: () => readRuntimeSettings(),
+  saveSettings: (input) => {
+    const settings = saveRuntimeSettings(input);
+    ncm.baseUrl = config.ncm.baseUrl.replace(/\/$/, "");
+    return settings;
+  },
   readTaste,
   importTaste,
   createNcmLoginQr,

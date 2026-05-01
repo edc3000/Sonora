@@ -103,6 +103,7 @@ const refs = {
   trackTitle: $("trackTitle"),
   trackArtist: $("trackArtist"),
   progress: $("progress"),
+  progressWave: $("progressWave"),
   elapsed: $("elapsed"),
   duration: $("duration"),
   playBtn: $("playBtn"),
@@ -117,6 +118,12 @@ const refs = {
   debugTrack: $("debugTrack"),
   debugTts: $("debugTts"),
   debugVolume: $("debugVolume"),
+  settingsStatus: $("settingsStatus"),
+  settingsForm: $("settingsForm"),
+  saveSettings: $("saveSettings"),
+  openaiKeyState: $("openaiKeyState"),
+  ttsKeyState: $("ttsKeyState"),
+  ncmKeyState: $("ncmKeyState"),
   ncmLoginBtn: $("ncmLoginBtn"),
   ncmLoginModal: $("ncmLoginModal"),
   ncmQrImage: $("ncmQrImage"),
@@ -157,15 +164,33 @@ init();
 async function init() {
   loadSpeechVoices();
   renderPixelBrand();
+  buildProgressWave();
   updateClock();
   setInterval(updateClock, 1000);
   bindSettings();
   bindThemeSwitch();
   bindHeroMatrixBump();
   bindControls();
-  await Promise.all([loadNow(), loadPlan(), loadTaste(), loadNcmStatus()]);
+  await Promise.all([loadNow(), loadPlan(), loadTaste(), loadNcmStatus(), loadRuntimeSettings()]);
   connectStream();
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+
+function buildProgressWave() {
+  if (!refs.progressWave) return;
+  const heights = [
+    18, 24, 27, 26, 25, 22, 19, 16,
+    17, 19, 20, 18, 17, 18, 21, 23,
+    24, 23, 20, 18, 16, 19, 26, 31,
+    35, 38, 39, 40, 39, 37, 35, 31,
+    27, 25, 28, 31, 34, 37, 39, 40,
+    39, 36, 30, 24, 20, 18, 17, 19,
+    22, 25, 27, 26, 24, 20, 17, 16,
+    19, 23, 27, 28, 25, 22, 19, 17
+  ];
+  refs.progressWave.innerHTML = heights.map((height, index) => (
+    `<span style="--h:${height}px;--i:${index}"></span>`
+  )).join("");
 }
 
 function loadSpeechVoices() {
@@ -408,8 +433,10 @@ function bindControls() {
     refs.progress.value = String(progress);
     seekToProgramTime(progress, { commit: true }).catch(() => logEvent("seek failed"));
   });
-  $("reloadTaste").addEventListener("click", loadTaste);
-  $("saveTaste").addEventListener("click", saveTaste);
+  $("reloadTaste")?.addEventListener("click", loadTaste);
+  $("saveTaste")?.addEventListener("click", saveTaste);
+  $("reloadSettings")?.addEventListener("click", loadRuntimeSettings);
+  refs.settingsForm?.addEventListener("submit", saveRuntimeSettings);
 }
 
 async function loadNow() {
@@ -445,6 +472,96 @@ async function loadNcmStatus() {
   state.ncmLoggedIn = Boolean(data.loggedIn);
   refs.ncmLoginBtn.textContent = data.loggedIn ? "LOGOUT" : "LOGIN";
   refs.ncmLoginBtn.title = data.configured ? "" : "Set NCM_BASE_URL to enable Netease login";
+}
+
+async function loadRuntimeSettings() {
+  setSettingsStatus("Reading .env");
+  try {
+    const data = await getJson("/api/settings");
+    renderRuntimeSettings(data);
+    setSettingsStatus("Loaded");
+  } catch (error) {
+    setSettingsStatus(`Load failed: ${error.message}`);
+  }
+}
+
+async function saveRuntimeSettings(event) {
+  event.preventDefault();
+  refs.saveSettings.disabled = true;
+  setSettingsStatus("Saving");
+  try {
+    const data = await postJson("/api/settings", {
+      openai: {
+        baseUrl: inputValue("openaiBaseUrl"),
+        apiKey: inputValue("openaiApiKey"),
+        model: inputValue("openaiModel")
+      },
+      tts: {
+        url: inputValue("ttsUrl"),
+        apiKey: inputValue("ttsApiKey"),
+        modelId: inputValue("ttsModelId"),
+        voiceId: inputValue("ttsVoiceId"),
+        englishMaleVoiceId: inputValue("ttsEnMaleVoiceId"),
+        cantoneseFemaleVoiceId: inputValue("ttsYueFemaleVoiceId")
+      },
+      ncm: {
+        baseUrl: inputValue("ncmBaseUrl")
+      }
+    });
+    renderRuntimeSettings(data);
+    await loadNcmStatus();
+    setSettingsStatus("Saved");
+    logEvent("settings saved");
+  } catch (error) {
+    setSettingsStatus(`Save failed: ${error.message}`);
+    logEvent("settings save failed");
+  } finally {
+    refs.saveSettings.disabled = false;
+  }
+}
+
+function renderRuntimeSettings(data = {}) {
+  setInputValue("openaiBaseUrl", data.openai?.baseUrl || "");
+  setInputValue("openaiModel", data.openai?.model || "");
+  setSecretInput("openaiApiKey", data.openai?.apiKey, "Paste OpenAI-compatible API key");
+  setInputValue("ttsUrl", data.tts?.url || "");
+  setSecretInput("ttsApiKey", data.tts?.apiKey, "Paste TTS API key");
+  setInputValue("ttsModelId", data.tts?.modelId || "");
+  setInputValue("ttsVoiceId", data.tts?.voiceId || "");
+  setInputValue("ttsEnMaleVoiceId", data.tts?.englishMaleVoiceId || "");
+  setInputValue("ttsYueFemaleVoiceId", data.tts?.cantoneseFemaleVoiceId || "");
+  setInputValue("ncmBaseUrl", data.ncm?.baseUrl || "");
+  renderKeyState(refs.openaiKeyState, data.openai?.apiKey?.configured, data.openai?.apiKey?.last4);
+  renderKeyState(refs.ttsKeyState, data.tts?.apiKey?.configured, data.tts?.apiKey?.last4 || data.tts?.provider);
+  renderKeyState(refs.ncmKeyState, data.ncm?.configured, data.ncm?.configured ? "ready" : "");
+}
+
+function renderKeyState(node, configured, detail = "") {
+  if (!node) return;
+  node.classList.toggle("configured", Boolean(configured));
+  node.textContent = configured ? `set${detail ? ` · ${detail}` : ""}` : "unset";
+}
+
+function setSecretInput(id, secret, fallback) {
+  const node = $(id);
+  if (!node) return;
+  node.value = "";
+  node.placeholder = secret?.configured
+    ? `Configured - ends ${secret.last4 || "****"}`
+    : fallback;
+}
+
+function setInputValue(id, value) {
+  const node = $(id);
+  if (node) node.value = value;
+}
+
+function inputValue(id) {
+  return ($(id)?.value || "").trim();
+}
+
+function setSettingsStatus(text) {
+  if (refs.settingsStatus) refs.settingsStatus.textContent = text;
 }
 
 async function saveTaste() {
@@ -1513,7 +1630,20 @@ function renderProgress() {
   refs.progress.max = duration ? String(duration) : "0";
   refs.progress.step = "0.01";
   if (!radio.isSeeking) refs.progress.value = duration ? String(progress) : "0";
+  renderProgressWave(progress, duration);
   updatePlayButton();
+}
+
+function renderProgressWave(progress, duration) {
+  if (!refs.progressWave) return;
+  const ratio = duration ? Math.min(1, Math.max(0, progress / duration)) : 0;
+  refs.progressWave.style.setProperty("--progress", ratio);
+  const bars = refs.progressWave.children;
+  const total = bars.length || 1;
+  for (let index = 0; index < bars.length; index += 1) {
+    const midpoint = (index + 0.5) / total;
+    bars[index].classList.toggle("is-played", midpoint <= ratio);
+  }
 }
 
 function currentPlaybackProgress() {
@@ -1618,9 +1748,10 @@ function seekHostIntro(progress) {
 function progressFromPointerEvent(event) {
   const duration = programDuration();
   if (!duration || !refs.progress) return null;
-  const rect = refs.progress.getBoundingClientRect();
+  const progressSurface = refs.progressWave || refs.progress;
+  const rect = progressSurface.getBoundingClientRect();
   if (!rect.width) return null;
-  const thumbInset = Math.min(22, Math.max(12, rect.height || 16));
+  const thumbInset = progressSurface === refs.progress ? Math.min(22, Math.max(12, rect.height || 16)) : 0;
   const trackLeft = rect.left + thumbInset;
   const trackRight = rect.right - thumbInset;
   const trackWidth = Math.max(1, trackRight - trackLeft);

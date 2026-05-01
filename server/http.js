@@ -40,6 +40,13 @@ async function handleApi(request, response, url, deps) {
   if (request.method === "GET" && url.pathname === "/api/ncm/status") {
     return sendJson(response, 200, await deps.readNcmStatus());
   }
+  if (request.method === "GET" && url.pathname === "/api/settings") {
+    return sendJson(response, 200, await deps.readSettings());
+  }
+  if (request.method === "POST" && url.pathname === "/api/settings") {
+    const body = await readBody(request);
+    return sendJson(response, 200, await deps.saveSettings(body));
+  }
   if (request.method === "POST" && url.pathname === "/api/ncm/login/qr/create") {
     return sendJson(response, 200, await deps.createNcmLoginQr());
   }

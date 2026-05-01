@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#08090f">
     <title>Sonora AI Radio</title>
     <link rel="manifest" href="/manifest.json">
-    <link rel="stylesheet" href="/styles.css?v=43">
+    <link rel="stylesheet" href="/styles.css?v=46">
   </head>
   <body>
     <div class="noise-layer" aria-hidden="true"></div>
@@ -53,6 +53,7 @@
           </div>
           <div class="progress-row">
             <span id="elapsed">0:00</span>
+            <div id="progressWave" class="progress-wave" aria-hidden="true"></div>
             <input id="progress" type="range" min="0" max="0" step="0.01" value="0" aria-label="Playback progress">
             <span id="duration">0:00</span>
           </div>
@@ -117,63 +118,114 @@
           <button id="closeSettings" class="close-button" type="button" aria-label="Close settings">×</button>
         </header>
 
-        <div class="drawer-tabs" role="tablist" aria-label="Settings sections">
-          <button class="drawer-tab active" data-settings-tab="profile" type="button">Profile</button>
-          <button class="drawer-tab" data-settings-tab="runtime" type="button">Runtime</button>
-          <button class="drawer-tab" data-settings-tab="plan" type="button">Plan</button>
-        </div>
-
-        <section class="drawer-view active" id="settings-profile">
-          <div class="ncm-card">
-            <img id="ncmAvatar" src="/assets/album-sonora.png" alt="Netease profile avatar">
+        <section class="drawer-view active settings-key-view" id="settings-keys">
+          <div class="settings-card settings-intro">
             <div>
-              <strong id="ncmName">Not connected</strong>
-              <span id="ncmSyncLine">Netease Cloud Music is waiting for login.</span>
+              <h3>Provider Keys</h3>
+              <p>Fill local credentials for LLM, TTS, and Netease services. Blank key fields keep the existing saved key.</p>
             </div>
-            <button id="syncNcmTaste" class="secondary-action" type="button">Sync</button>
+            <span id="settingsStatus">Reading .env</span>
           </div>
-          <div class="action-group">
-            <button id="reloadTaste" class="secondary-action muted" type="button">Refresh</button>
-            <button id="saveTaste" class="secondary-action" type="button">Save</button>
-          </div>
-          <label>
-            <span>taste.md</span>
+
+          <form id="settingsForm" class="key-settings-form">
+            <section class="key-card">
+              <header>
+                <div>
+                  <span class="key-card-kicker">LLM</span>
+                  <h3>Chat Model</h3>
+                </div>
+                <strong id="openaiKeyState">unset</strong>
+              </header>
+              <label>
+                <span>OPENAI_BASE_URL</span>
+                <input id="openaiBaseUrl" type="url" autocomplete="off" spellcheck="false">
+              </label>
+              <label>
+                <span>OPENAI_API_KEY</span>
+                <input id="openaiApiKey" type="password" autocomplete="new-password" spellcheck="false">
+              </label>
+              <label>
+                <span>OPENAI_MODEL</span>
+                <input id="openaiModel" type="text" autocomplete="off" spellcheck="false">
+              </label>
+            </section>
+
+            <section class="key-card">
+              <header>
+                <div>
+                  <span class="key-card-kicker">VOICE</span>
+                  <h3>TTS Provider</h3>
+                </div>
+                <strong id="ttsKeyState">unset</strong>
+              </header>
+              <label>
+                <span>TTS_URL</span>
+                <input id="ttsUrl" type="url" autocomplete="off" spellcheck="false">
+              </label>
+              <label>
+                <span>TTS_API_KEY</span>
+                <input id="ttsApiKey" type="password" autocomplete="new-password" spellcheck="false">
+              </label>
+              <label>
+                <span>TTS_MODEL_ID</span>
+                <input id="ttsModelId" type="text" autocomplete="off" spellcheck="false">
+              </label>
+              <label>
+                <span>TTS_VOICE_ID</span>
+                <input id="ttsVoiceId" type="text" autocomplete="off" spellcheck="false">
+              </label>
+              <label>
+                <span>TTS_EN_MALE_VOICE_ID</span>
+                <input id="ttsEnMaleVoiceId" type="text" autocomplete="off" spellcheck="false">
+              </label>
+              <label>
+                <span>TTS_YUE_FEMALE_VOICE_ID</span>
+                <input id="ttsYueFemaleVoiceId" type="text" autocomplete="off" spellcheck="false">
+              </label>
+            </section>
+
+            <section class="key-card">
+              <header>
+                <div>
+                  <span class="key-card-kicker">MUSIC</span>
+                  <h3>Netease API</h3>
+                </div>
+                <strong id="ncmKeyState">unset</strong>
+              </header>
+              <label>
+                <span>NCM_BASE_URL</span>
+                <input id="ncmBaseUrl" type="url" autocomplete="off" spellcheck="false">
+              </label>
+              <div class="ncm-card compact">
+                <img id="ncmAvatar" src="/assets/album-sonora.png" alt="Netease profile avatar">
+                <div>
+                  <strong id="ncmName">Not connected</strong>
+                  <span id="ncmSyncLine">Netease Cloud Music is waiting for login.</span>
+                </div>
+                <button id="syncNcmTaste" class="secondary-action" type="button">Sync</button>
+              </div>
+            </section>
+
+            <div class="settings-actions">
+              <button id="reloadSettings" class="secondary-action muted" type="button">Reload</button>
+              <button id="saveSettings" class="secondary-action" type="submit">Save Keys</button>
+            </div>
+          </form>
+
+          <div class="runtime-hidden" hidden>
+            <button id="reloadTaste" type="button"></button>
+            <button id="saveTaste" type="button"></button>
             <textarea id="tasteText" aria-label="taste.md"></textarea>
-          </label>
-          <label>
-            <span>routines.md</span>
             <textarea id="routinesText" aria-label="routines.md"></textarea>
-          </label>
-          <label>
-            <span>mood-rules.md</span>
             <textarea id="moodRulesText" aria-label="mood-rules.md"></textarea>
-          </label>
-          <label>
-            <span>playlists.json</span>
             <pre id="playlistJson" contenteditable="true" aria-label="playlists.json"></pre>
-          </label>
-        </section>
-
-        <section class="drawer-view" id="settings-runtime">
-          <div class="settings-card">
-            <h3>HTTP Contract</h3>
-            <code>GET /api/now</code>
-            <code>GET /api/taste</code>
-            <code>GET /api/plan/today</code>
-            <code>POST /api/chat</code>
-            <code>WS /stream</code>
+            <dd id="debugStatus">idle</dd>
+            <dd id="debugTrack">-</dd>
+            <dd id="debugTts">-</dd>
+            <dd id="debugVolume">72</dd>
+            <ul id="eventLog"></ul>
+            <ol id="planList"></ol>
           </div>
-          <dl class="state-list">
-            <div><dt>Status</dt><dd id="debugStatus">idle</dd></div>
-            <div><dt>Track</dt><dd id="debugTrack">-</dd></div>
-            <div><dt>TTS</dt><dd id="debugTts">-</dd></div>
-            <div><dt>Volume</dt><dd id="debugVolume">72</dd></div>
-          </dl>
-          <ul id="eventLog" class="event-log"></ul>
-        </section>
-
-        <section class="drawer-view" id="settings-plan">
-          <ol id="planList" class="plan-list"></ol>
         </section>
       </section>
     </aside>
@@ -203,6 +255,6 @@
     </div>
 
     <audio id="audio" preload="metadata"></audio>
-    <script src="/app.js?v=43" type="module"></script>
+    <script src="/app.js?v=46" type="module"></script>
   </body>
 </html>

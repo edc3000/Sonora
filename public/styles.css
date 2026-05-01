@@ -453,6 +453,22 @@ body[data-theme="light"] .chat-dock input {
   background: rgba(255, 255, 255, 0.62);
 }
 
+body[data-theme="light"] input[type="url"],
+body[data-theme="light"] input[type="password"],
+body[data-theme="light"] input[type="text"] {
+  background: rgba(255, 255, 255, 0.66);
+}
+
+body[data-theme="light"] .key-card {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(60, 109, 240, 0.07), transparent 34%),
+    rgba(255, 255, 255, 0.46);
+}
+
+body[data-theme="light"] .settings-actions {
+  background: linear-gradient(180deg, transparent, rgba(246, 243, 238, 0.96) 32%);
+}
+
 .signal-bars,
 .voice-bars {
   display: flex;
@@ -564,11 +580,42 @@ input[type="range"] {
   accent-color: var(--mint);
 }
 
+input[type="url"],
+input[type="password"],
+input[type="text"] {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.38);
+  color: var(--text);
+  padding: 0 13px;
+  outline: none;
+}
+
+input[type="url"]:focus,
+input[type="password"]:focus,
+input[type="text"]:focus {
+  border-color: var(--line-bright);
+  box-shadow: 0 0 0 3px rgba(82, 244, 178, 0.09);
+}
+
+input::placeholder {
+  color: var(--dim);
+}
+
 #progress {
+  position: absolute;
+  grid-column: 2;
+  inset: 8px 0;
+  width: 100%;
+  height: 40px;
+  opacity: 0;
   pointer-events: none;
 }
 
 .progress-row {
+  position: relative;
   grid-column: 2 / -1;
   display: grid;
   grid-template-columns: 38px minmax(0, 1fr) 38px;
@@ -581,6 +628,69 @@ input[type="range"] {
   padding-block: 8px;
   touch-action: none;
   user-select: none;
+}
+
+.progress-wave {
+  position: relative;
+  grid-column: 2;
+  height: 42px;
+  display: grid;
+  grid-template-columns: repeat(64, minmax(2px, 1fr));
+  align-items: center;
+  gap: 3px;
+  padding-block: 4px;
+  color: rgba(239, 242, 255, 0.9);
+}
+
+.progress-wave::before {
+  content: "";
+  position: absolute;
+  inset: 50% 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(82, 244, 178, 0.14), transparent);
+  transform: translateY(-50%);
+}
+
+.progress-wave span {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 7px;
+  height: var(--h);
+  justify-self: center;
+  border-radius: 999px;
+  background: rgba(154, 157, 178, 0.36);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.015) inset;
+  transition:
+    height 160ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease,
+    opacity 120ms ease;
+}
+
+.progress-wave span.is-played {
+  background: linear-gradient(180deg, #f5f6ff, #c9d5ee 68%, #9daac4);
+  box-shadow:
+    0 0 10px rgba(205, 220, 255, 0.18),
+    0 0 1px rgba(255, 255, 255, 0.52);
+}
+
+.transport-panel:has(#playBtn:not(:disabled)) .progress-wave span.is-played {
+  opacity: 0.96;
+}
+
+body[data-theme="light"] .progress-wave::before {
+  background: linear-gradient(90deg, transparent, rgba(21, 21, 33, 0.08), transparent);
+}
+
+body[data-theme="light"] .progress-wave span {
+  background: rgba(21, 21, 33, 0.18);
+  box-shadow: none;
+}
+
+body[data-theme="light"] .progress-wave span.is-played {
+  background: linear-gradient(180deg, #10121c, #2b3040 72%, #53596a);
+  box-shadow: 0 0 8px rgba(21, 21, 33, 0.12);
 }
 
 .queue-panel {
@@ -999,6 +1109,93 @@ input[type="range"] {
   gap: 16px;
 }
 
+.settings-key-view {
+  padding-bottom: 20px;
+}
+
+.settings-intro {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+}
+
+.settings-intro p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.settings-intro span {
+  flex: 0 0 auto;
+  color: var(--mint);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.key-settings-form {
+  display: grid;
+  gap: 14px;
+}
+
+.key-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(111, 169, 255, 0.08), transparent 32%),
+    rgba(0, 0, 0, 0.3);
+}
+
+.key-card header {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: start;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.key-card h3 {
+  margin: 3px 0 0;
+  font-size: 18px;
+}
+
+.key-card header strong {
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.key-card header strong.configured {
+  color: var(--mint);
+  background: rgba(82, 244, 178, 0.12);
+}
+
+.key-card-kicker {
+  color: var(--dim);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.settings-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 0 2px;
+  background: linear-gradient(180deg, transparent, rgba(16, 18, 28, 0.96) 32%);
+}
+
 .action-group {
   display: flex;
   gap: 10px;
@@ -1043,6 +1240,17 @@ input[type="range"] {
   border-radius: 50%;
   object-fit: cover;
   border: 1px solid var(--line-bright);
+}
+
+.ncm-card.compact {
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  min-height: 64px;
+  padding: 12px;
+}
+
+.ncm-card.compact img {
+  width: 40px;
+  height: 40px;
 }
 
 .ncm-card strong,
