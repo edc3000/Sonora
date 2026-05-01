@@ -564,6 +564,10 @@ input[type="range"] {
   accent-color: var(--mint);
 }
 
+#progress {
+  pointer-events: none;
+}
+
 .progress-row {
   grid-column: 2 / -1;
   display: grid;
@@ -572,6 +576,11 @@ input[type="range"] {
   align-items: center;
   color: var(--dim);
   font-size: 11px;
+  cursor: pointer;
+  margin-block: -8px;
+  padding-block: 8px;
+  touch-action: none;
+  user-select: none;
 }
 
 .queue-panel {

@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#08090f">
     <title>Sonora AI Radio</title>
     <link rel="manifest" href="/manifest.json">
-    <link rel="stylesheet" href="/styles.css?v=18">
+    <link rel="stylesheet" href="/styles.css?v=39">
   </head>
   <body>
     <div class="noise-layer" aria-hidden="true"></div>
@@ -53,7 +53,7 @@
           </div>
           <div class="progress-row">
             <span id="elapsed">0:00</span>
-            <input id="progress" type="range" min="0" max="100" value="0" aria-label="Playback progress">
+            <input id="progress" type="range" min="0" max="0" step="0.01" value="0" aria-label="Playback progress">
             <span id="duration">0:00</span>
           </div>
         </section>
@@ -203,6 +203,6 @@
     </div>
 
     <audio id="audio" preload="metadata"></audio>
-    <script src="/app.js?v=18" type="module"></script>
+    <script src="/app.js?v=39" type="module"></script>
   </body>
 </html>

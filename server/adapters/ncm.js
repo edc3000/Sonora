@@ -150,6 +150,13 @@ export class NeteaseCloudMusicApi {
     return "";
   }
 
+  async songDetail(id) {
+    if (!this.baseUrl || !id || String(id).startsWith("local-")) return null;
+    const data = await this.fetchJson("/song/detail", { ids: String(id) });
+    const song = data.songs?.[0] || data.data?.songs?.[0] || null;
+    return song ? this.mapSong(song) : null;
+  }
+
   async lyric(id) {
     if (!this.baseUrl || String(id).startsWith("local-")) return "";
     const data = await this.fetchJson("/lyric", { id });
@@ -195,17 +202,20 @@ export class NeteaseCloudMusicApi {
     if (!track) return null;
     const candidates = track.id ? [track] : await this.search(`${track.title || ""} ${track.artist || ""}`.trim());
     const resolved = candidates[0] || track;
-    const [url, lyricText] = await Promise.all([
+    const [detail, url, lyricText] = await Promise.all([
+      resolved.id ? this.songDetail(resolved.id).catch(() => null) : Promise.resolve(null),
       track.url || resolved.url || this.songUrl(resolved.id),
       track.lyric ? Promise.resolve(track.lyric) : this.lyric(resolved.id).catch(() => "")
     ]);
+    const cover = firstRealCover(detail?.cover, resolved.cover, track.cover);
     return {
+      ...(detail || {}),
       ...resolved,
       ...track,
       id: resolved.id || track.id || crypto.randomUUID(),
       url: url || "",
-      cover: resolved.cover || track.cover || "/assets/album-sonora.png",
-      duration: Number(resolved.duration || track.duration || 240),
+      cover,
+      duration: Number(detail?.duration || resolved.duration || track.duration || 240),
       lyric: undefined,
       lyricLines: Array.isArray(track.lyricLines) && track.lyricLines.length
         ? track.lyricLines
@@ -226,6 +236,10 @@ export class NeteaseCloudMusicApi {
     if (!this.baseUrl) throw new Error("NCM_BASE_URL is not configured");
     return fetchJson(this.url(endpoint, params, options), options.fetchOptions);
   }
+}
+
+function firstRealCover(...covers) {
+  return covers.find((cover) => cover && cover !== "/assets/album-sonora.png") || "/assets/album-sonora.png";
 }
 
 function parseLrc(lyric = "") {

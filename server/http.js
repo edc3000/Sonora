@@ -31,6 +31,9 @@ async function handleApi(request, response, url, deps) {
   if (request.method === "GET" && url.pathname === "/api/now") {
     return sendJson(response, 200, deps.state.snapshot.now);
   }
+  if (request.method === "GET" && url.pathname === "/api/player/audio") {
+    return deps.streamTrackAudio(url.searchParams.get("id"), request, response);
+  }
   if (request.method === "GET" && url.pathname === "/api/taste") {
     return sendJson(response, 200, await deps.readTaste());
   }
@@ -115,10 +118,16 @@ async function handleApi(request, response, url, deps) {
       if (Number.isFinite(Number(body.progress))) {
         state.now.progress = clampProgress(Number(body.progress), state.now.track?.duration);
       }
+      if (["idle", "paused", "playing", "speaking"].includes(body.status)) {
+        state.now.status = body.status;
+      }
       return state;
     });
-    deps.broadcast("now-playing", deps.state.snapshot.now);
+    if (!body.silent) deps.broadcast("now-playing", deps.state.snapshot.now);
     return sendJson(response, 200, deps.state.snapshot.now);
+  }
+  if (request.method === "POST" && url.pathname === "/api/player/refresh-audio") {
+    return sendJson(response, 200, await deps.refreshCurrentTrackAudio());
   }
   if (request.method === "POST" && url.pathname === "/api/player/next") {
     return sendJson(response, 200, await deps.nextTrack());

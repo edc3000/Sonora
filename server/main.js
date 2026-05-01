@@ -2,6 +2,7 @@ import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { config } from "./config.js";
 import { StateStore } from "./state.js";
 import { NeteaseCloudMusicApi } from "./adapters/ncm.js";
@@ -40,7 +41,8 @@ const agent = new AgentBrain({ openai: config.openai, ncm });
 const tts = new TtsPipeline({ cacheDir: config.ttsCacheDir, tts: config.tts });
 const hub = new WebSocketHub();
 const MIN_QUEUE_SIZE = 4;
-const TARGET_QUEUE_SIZE = 6;
+const TARGET_QUEUE_SIZE = 5;
+const TARGET_SET_SIZE = TARGET_QUEUE_SIZE + 1;
 let refillPromise = null;
 let warmQueuePromise = null;
 
@@ -223,6 +225,9 @@ async function ensureRadio({ trigger = "open" } = {}) {
   const now = state.snapshot.now;
   const hasTrack = Boolean(now.track);
   const queueSize = now.queue?.length || 0;
+  if (queueSize > TARGET_QUEUE_SIZE) {
+    await trimQueueToTarget();
+  }
   if (!hasTrack) {
     return runShow({
       input: "Start Sonora as a personal radio station. Build a ready-to-play queue from the user's taste, current time, and recent listening context.",
@@ -233,6 +238,15 @@ async function ensureRadio({ trigger = "open" } = {}) {
     await refillQueue({ trigger });
   }
   return state.snapshot.now;
+}
+
+async function trimQueueToTarget() {
+  await state.update((current) => {
+    current.now.queue = (current.now.queue || []).slice(0, TARGET_QUEUE_SIZE);
+    return current;
+  });
+  hub.broadcast("queue-updated", { queue: state.snapshot.now.queue });
+  hub.broadcast("now-playing", state.snapshot.now);
 }
 
 async function refillQueue({ trigger = "auto-refill" } = {}) {
@@ -328,12 +342,12 @@ function fillQueueFromTasteSeeds(tracks = [], fragments = {}) {
   };
 
   for (const track of tracks) {
-    if (selected.length >= TARGET_QUEUE_SIZE) break;
+    if (selected.length >= TARGET_SET_SIZE) break;
     add(track);
   }
 
   for (const seed of fragments.musicTaste?.songSeeds || []) {
-    if (selected.length >= TARGET_QUEUE_SIZE) break;
+    if (selected.length >= TARGET_SET_SIZE) break;
     add({
       id: String(seed.id || ""),
       title: seed.title,
@@ -346,7 +360,7 @@ function fillQueueFromTasteSeeds(tracks = [], fragments = {}) {
     });
   }
 
-  return selected.slice(0, TARGET_QUEUE_SIZE);
+  return selected.slice(0, TARGET_SET_SIZE);
 }
 
 function withTimeout(promise, ms, fallback) {
@@ -492,6 +506,105 @@ async function previousTrack() {
   hub.broadcast("queue-updated", { queue: state.snapshot.now.queue });
   warmQueueTts({ limit: 2 });
   return state.snapshot.now;
+}
+
+async function refreshCurrentTrackAudio() {
+  const currentTrack = state.snapshot.now.track;
+  if (!currentTrack) return state.snapshot.now;
+  const refreshed = await ncm.hydrateTrack({
+    ...currentTrack,
+    url: "",
+    lyricLines: currentTrack.lyricLines || []
+  }).catch(() => null);
+  if (!refreshed?.url) return state.snapshot.now;
+  await state.update((current) => {
+    if (String(current.now.track?.id || "") !== String(currentTrack.id || "")) return current;
+    current.now.track = {
+      ...current.now.track,
+      ...refreshed,
+      intro: current.now.track.intro || refreshed.intro,
+      introTtsUrl: current.now.track.introTtsUrl || refreshed.introTtsUrl || "",
+      introTtsProvider: current.now.track.introTtsProvider || refreshed.introTtsProvider || "",
+      introTtsError: current.now.track.introTtsError || refreshed.introTtsError || ""
+    };
+    return current;
+  });
+  hub.broadcast("now-playing", state.snapshot.now);
+  return state.snapshot.now;
+}
+
+async function streamTrackAudio(id, request, response) {
+  const track = findTrackById(id);
+  if (!track) {
+    response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    response.end("Track not found");
+    return;
+  }
+
+  let url = track.url || "";
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (!url || attempt > 0) {
+      url = await ncm.songUrl(track.id).catch(() => "");
+      if (url) await patchTrackAudioUrl(track.id, url);
+    }
+    if (!url) continue;
+
+    const upstream = await fetch(url, {
+      headers: {
+        "user-agent": "Mozilla/5.0 Sonora/0.1",
+        "referer": "https://music.163.com/",
+        ...(request.headers.range ? { range: request.headers.range } : {})
+      }
+    }).catch(() => null);
+    if (!upstream?.ok || !upstream.body) {
+      url = "";
+      continue;
+    }
+
+    const headers = {
+      "content-type": upstream.headers.get("content-type") || "audio/mpeg",
+      "cache-control": "no-store",
+      "accept-ranges": upstream.headers.get("accept-ranges") || "bytes"
+    };
+    for (const header of ["content-length", "content-range"]) {
+      const value = upstream.headers.get(header);
+      if (value) headers[header] = value;
+    }
+    response.writeHead(upstream.status === 206 ? 206 : 200, headers);
+    Readable.fromWeb(upstream.body).pipe(response);
+    return;
+  }
+
+  response.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
+  response.end("Audio URL unavailable");
+}
+
+function findTrackById(id) {
+  const key = String(id || "");
+  if (!key) return null;
+  const now = state.snapshot.now;
+  const tracks = [
+    now.track,
+    ...(now.queue || []),
+    ...(now.history || [])
+  ].filter(Boolean);
+  return tracks.find((track) => String(track.id || "") === key) || null;
+}
+
+async function patchTrackAudioUrl(id, url) {
+  const key = String(id || "");
+  if (!key || !url) return;
+  await state.update((current) => {
+    const patch = (track) => (
+      track && String(track.id || "") === key
+        ? { ...track, url }
+        : track
+    );
+    current.now.track = patch(current.now.track);
+    current.now.queue = (current.now.queue || []).map(patch);
+    current.now.history = (current.now.history || []).map(patch);
+    return current;
+  });
 }
 
 async function prepareRadioTracks(tracks, decision, { ttsMode = "first" } = {}) {
@@ -654,6 +767,8 @@ const deps = {
   runShow,
   nextTrack,
   previousTrack,
+  refreshCurrentTrackAudio,
+  streamTrackAudio,
   broadcast: (type, payload) => hub.broadcast(type, payload)
 };
 
@@ -665,4 +780,7 @@ server.on("upgrade", (request, socket) => {
 
 server.listen(config.port, "127.0.0.1", () => {
   console.log(`Sonora AI Radio listening on http://localhost:${config.port}`);
+  ensureRadio({ trigger: "startup" }).catch((error) => {
+    console.warn(`Startup radio ensure failed: ${error.message}`);
+  });
 });
