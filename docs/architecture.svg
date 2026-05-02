@@ -1,203 +1,220 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1120" viewBox="0 0 1680 1120" role="img" aria-labelledby="title desc">
-  <title id="title">Sonora AI Radio Architecture</title>
-  <desc id="desc">Architecture diagram for the Sonora AI Radio Node.js PWA project.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1680" viewBox="0 0 1080 1680" role="img" aria-labelledby="title desc">
+  <title id="title">Sonora 项目架构图</title>
+  <desc id="desc">按前端交互、API 连接交互、后端编排、后端模块、外部服务与本地数据分层绘制的 Sonora 项目架构图。</desc>
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#08111f"/>
-      <stop offset="0.55" stop-color="#111624"/>
-      <stop offset="1" stop-color="#071c1c"/>
+    <radialGradient id="glow" cx="50%" cy="0%" r="72%">
+      <stop offset="0" stop-color="#1f2937" stop-opacity="0.78"/>
+      <stop offset="0.5" stop-color="#0f172a" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="front" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#13182e"/>
+      <stop offset="1" stop-color="#241b3f"/>
     </linearGradient>
-    <linearGradient id="client" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#273c75"/>
-      <stop offset="1" stop-color="#1e6f5c"/>
+    <linearGradient id="api" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#101d2c"/>
+      <stop offset="1" stop-color="#0b3340"/>
     </linearGradient>
-    <linearGradient id="server" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#27596b"/>
-      <stop offset="1" stop-color="#334155"/>
+    <linearGradient id="core" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#251407"/>
+      <stop offset="1" stop-color="#3a2110"/>
     </linearGradient>
-    <linearGradient id="brain" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#7c3aed"/>
-      <stop offset="1" stop-color="#0f766e"/>
+    <linearGradient id="module" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f1618"/>
+      <stop offset="1" stop-color="#0d2a24"/>
     </linearGradient>
     <linearGradient id="data" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#92400e"/>
-      <stop offset="1" stop-color="#475569"/>
+      <stop offset="0" stop-color="#171717"/>
+      <stop offset="1" stop-color="#182217"/>
     </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000000" flood-opacity="0.32"/>
+    <filter id="shadow" x="-18%" y="-18%" width="136%" height="136%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000000" flood-opacity="0.58"/>
     </filter>
-    <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9fb7c7"/>
-    </marker>
-    <marker id="arrowHot" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f7c46c"/>
+    <filter id="textShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="2" flood-color="#000000" flood-opacity="0.85"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#697180"/>
     </marker>
     <style>
-      .page { fill: url(#bg); }
-      .title { font: 800 46px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #f7fafc; letter-spacing: 0; }
-      .subtitle { font: 400 22px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #b8c5cf; }
-      .layer-title { font: 800 22px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #eaf2f6; letter-spacing: 0; }
-      .box-title { font: 800 20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #ffffff; letter-spacing: 0; }
-      .box-sub { font: 500 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #d7e2ea; }
-      .small { font: 500 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #aebfca; }
-      .chip { font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #dce9f0; }
-      .code { font: 600 14px "SFMono-Regular", Consolas, monospace; fill: #e7f4fa; }
-      .panel { fill: rgba(255,255,255,0.055); stroke: rgba(255,255,255,0.12); stroke-width: 1.2; rx: 18; }
-      .card { stroke: rgba(255,255,255,0.14); stroke-width: 1.2; rx: 16; filter: url(#shadow); }
-      .client { fill: url(#client); }
-      .server { fill: url(#server); }
-      .brain { fill: url(#brain); }
-      .data { fill: url(#data); }
-      .external { fill: #1f2937; stroke: rgba(255,255,255,0.16); stroke-width: 1.2; rx: 16; filter: url(#shadow); }
-      .line { fill: none; stroke: #9fb7c7; stroke-width: 2.3; marker-end: url(#arrow); opacity: 0.86; }
-      .line-hot { fill: none; stroke: #f7c46c; stroke-width: 3; marker-end: url(#arrowHot); opacity: 0.95; }
-      .line-soft { fill: none; stroke: #7dd3fc; stroke-width: 2; marker-end: url(#arrow); opacity: 0.56; stroke-dasharray: 8 8; }
-      .chip-bg { fill: rgba(255,255,255,0.095); stroke: rgba(255,255,255,0.12); stroke-width: 1; rx: 12; }
-      .note { fill: rgba(6,12,20,0.46); stroke: rgba(255,255,255,0.12); stroke-width: 1; rx: 14; }
+      .bg { fill: #000; }
+      .title { fill: #f4f4f5; font: 700 43px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; filter: url(#textShadow); }
+      .subtitle { fill: #a7a7ad; font: 600 20px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .badge { fill: #251d0b; stroke: #70551f; stroke-width: 2; rx: 12; }
+      .badgeText { fill: #ddbe7d; font: 800 17px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .layerName { fill: #737781; font: 800 18px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .layerHint { fill: #5e626b; font: 700 15px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .panel { fill: rgba(255,255,255,0.025); stroke: rgba(255,255,255,0.07); stroke-width: 1.2; rx: 14; }
+      .card { stroke-width: 2.1; rx: 10; filter: url(#shadow); }
+      .front { fill: url(#front); stroke: #3a3e72; }
+      .api { fill: url(#api); stroke: #225370; }
+      .core { fill: url(#core); stroke: #75451d; }
+      .module { fill: url(#module); stroke: #24705a; }
+      .data { fill: url(#data); stroke: #46513c; }
+      .kicker { fill: #7284a6; font: 800 14px "SFMono-Regular", Menlo, Consolas, monospace; letter-spacing: 1.5px; }
+      .kicker2 { fill: #c78a58; font: 800 14px "SFMono-Regular", Menlo, Consolas, monospace; letter-spacing: 1.5px; }
+      .kicker3 { fill: #7dd3ad; font: 800 14px "SFMono-Regular", Menlo, Consolas, monospace; letter-spacing: 1.5px; }
+      .cardTitle { fill: #e5edf7; font: 800 23px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .cardTitle2 { fill: #f1b17a; font: 800 23px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .cardTitle3 { fill: #a5f3cf; font: 800 23px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .body { fill: #b8c0cc; font: 600 18px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .bodyDim { fill: #8d98a7; font: 600 16px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .code { fill: #aeb8c5; font: 700 15px "SFMono-Regular", Menlo, Consolas, monospace; }
+      .tag { fill: #111720; stroke: #3b4656; stroke-width: 1; rx: 4; }
+      .tagText { fill: #aeb8c5; font: 700 13px "SFMono-Regular", Menlo, Consolas, monospace; }
+      .flow { fill: none; stroke: #697180; stroke-width: 2.5; marker-end: url(#arrow); opacity: 0.82; }
+      .flowSoft { fill: none; stroke: #4e5663; stroke-width: 2; marker-end: url(#arrow); opacity: 0.58; stroke-dasharray: 7 7; }
+      .note { fill: #050806; stroke: #253128; stroke-width: 1.4; rx: 8; }
+      .noteText { fill: #c1c7cf; font: 700 17px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
     </style>
   </defs>
 
-  <rect class="page" width="1680" height="1120"/>
-  <circle cx="1460" cy="150" r="230" fill="#1d4ed8" opacity="0.09"/>
-  <circle cx="260" cy="1000" r="260" fill="#0f766e" opacity="0.10"/>
+  <rect class="bg" width="1080" height="1680"/>
+  <rect width="1080" height="620" fill="url(#glow)"/>
 
-  <text x="84" y="88" class="title">Sonora AI Radio 架构图</text>
-  <text x="84" y="124" class="subtitle">基于当前代码：Node.js 本地服务 + PWA 前端 + OpenAI 兼容 Agent + 网易云音乐 + TTS 缓存</text>
+  <text x="333" y="86" class="title">Sonora 项目架构图</text>
+  <text x="283" y="124" class="subtitle">从用户交互到后端推荐、取歌、播报、状态同步的真实代码分层</text>
+  <rect x="229" y="153" width="622" height="45" class="badge"/>
+  <text x="257" y="182" class="badgeText">个人 AI 电台 · PWA 前端 · Node 本地服务 · 网易云音乐 · AI 主持人</text>
 
-  <rect x="60" y="165" width="1560" height="145" class="panel"/>
-  <text x="84" y="204" class="layer-title">1. 交互层 / Browser PWA</text>
-  <rect x="90" y="225" width="320" height="58" class="card client"/>
-  <text x="112" y="251" class="box-title">public/index.html</text>
-  <text x="112" y="273" class="box-sub">Radio console / settings drawer</text>
-  <rect x="440" y="225" width="320" height="58" class="card client"/>
-  <text x="462" y="251" class="box-title">public/app.js</text>
-  <text x="462" y="273" class="box-sub">Audio, chat, progress, NCM login UI</text>
-  <rect x="790" y="225" width="250" height="58" class="card client"/>
-  <text x="812" y="251" class="box-title">public/sw.js</text>
-  <text x="812" y="273" class="box-sub">PWA service worker</text>
-  <rect x="1070" y="225" width="300" height="58" class="card client"/>
-  <text x="1092" y="251" class="box-title">Browser Audio APIs</text>
-  <text x="1092" y="273" class="box-sub">audio tag, hostAudio, speechSynthesis</text>
-  <rect x="1400" y="225" width="170" height="58" class="card client"/>
-  <text x="1422" y="251" class="box-title">Assets</text>
-  <text x="1422" y="273" class="box-sub">CSS, manifest, cover art</text>
+  <!-- 第一层：前端交互 -->
+  <rect x="108" y="240" width="880" height="212" class="panel"/>
+  <text x="48" y="312" class="layerName">第一层</text>
+  <text x="31" y="340" class="layerHint">前端交互</text>
 
-  <rect x="60" y="362" width="1560" height="210" class="panel"/>
-  <text x="84" y="401" class="layer-title">2. Node HTTP 编排层 / server/main.js</text>
-  <rect x="90" y="426" width="250" height="92" class="card server"/>
-  <text x="112" y="454" class="box-title">HTTP server</text>
-  <text x="112" y="477" class="code">server/main.js</text>
-  <text x="112" y="500" class="box-sub">listen 127.0.0.1:PORT</text>
-  <rect x="382" y="426" width="260" height="92" class="card server"/>
-  <text x="404" y="454" class="box-title">createHandler</text>
-  <text x="404" y="477" class="code">server/http.js</text>
-  <text x="404" y="500" class="box-sub">REST, static files, TTS files</text>
-  <rect x="684" y="426" width="250" height="92" class="card server"/>
-  <text x="706" y="454" class="box-title">WebSocketHub</text>
-  <text x="706" y="477" class="code">server/ws.js</text>
-  <text x="706" y="500" class="box-sub">/stream realtime events</text>
-  <rect x="976" y="426" width="250" height="92" class="card server"/>
-  <text x="998" y="454" class="box-title">Radio runtime</text>
-  <text x="998" y="477" class="box-sub">ensureRadio / runShow</text>
-  <text x="998" y="500" class="box-sub">next / previous / refill</text>
-  <rect x="1268" y="426" width="250" height="92" class="card server"/>
-  <text x="1290" y="454" class="box-title">Audio proxy</text>
-  <text x="1290" y="477" class="box-sub">/api/player/audio</text>
-  <text x="1290" y="500" class="box-sub">range-aware upstream stream</text>
+  <rect x="136" y="270" width="260" height="132" class="card front"/>
+  <text x="154" y="296" class="kicker">PUBLIC / APP</text>
+  <text x="154" y="326" class="cardTitle">电台主界面</text>
+  <text x="154" y="354" class="body">播放器、队列、主持稿、进度条</text>
+  <text x="154" y="380" class="code">index.html / app.js</text>
 
-  <rect x="90" y="531" width="260" height="24" class="chip-bg"/>
-  <text x="108" y="548" class="chip">REST: /api/now /api/chat /api/player/* /api/ncm/* /api/taste</text>
-  <rect x="382" y="531" width="320" height="24" class="chip-bg"/>
-  <text x="400" y="548" class="chip">WS events: host-speaking, now-playing, queue-updated, track-ended</text>
-  <rect x="736" y="531" width="262" height="24" class="chip-bg"/>
-  <text x="754" y="548" class="chip">Startup calls ensureRadio({ trigger: "startup" })</text>
+  <rect x="416" y="270" width="260" height="132" class="card front"/>
+  <text x="434" y="296" class="kicker">USER ACTION</text>
+  <text x="434" y="326" class="cardTitle">用户操作</text>
+  <text x="434" y="354" class="body">聊天点歌、播放暂停、上一首下一首</text>
+  <text x="434" y="380" class="code">chat / player controls</text>
 
-  <rect x="60" y="624" width="1560" height="300" class="panel"/>
-  <text x="84" y="663" class="layer-title">3. 智能大脑、适配器和本地状态</text>
-  <rect x="90" y="692" width="250" height="92" class="card brain"/>
-  <text x="112" y="720" class="box-title">Intent Router</text>
-  <text x="112" y="743" class="code">server/router.js</text>
-  <text x="112" y="766" class="box-sub">control / music / agent</text>
-  <rect x="382" y="692" width="250" height="92" class="card brain"/>
-  <text x="404" y="720" class="box-title">ContextBuilder</text>
-  <text x="404" y="743" class="code">server/context.js</text>
-  <text x="404" y="766" class="box-sub">prompt + taste + env + memory</text>
-  <rect x="674" y="692" width="250" height="92" class="card brain"/>
-  <text x="696" y="720" class="box-title">AgentBrain</text>
-  <text x="696" y="743" class="code">server/agent.js</text>
-  <text x="696" y="766" class="box-sub">candidate pool + LLM JSON</text>
-  <rect x="966" y="692" width="250" height="92" class="card brain"/>
-  <text x="988" y="720" class="box-title">TtsPipeline</text>
-  <text x="988" y="743" class="code">server/tts.js</text>
-  <text x="988" y="766" class="box-sub">Step / Fish / browser fallback</text>
-  <rect x="1258" y="692" width="250" height="92" class="card brain"/>
-  <text x="1280" y="720" class="box-title">Scheduler</text>
-  <text x="1280" y="743" class="code">server/scheduler.js</text>
-  <text x="1280" y="766" class="box-sub">daily plan + hourly mood</text>
+  <rect x="696" y="270" width="260" height="132" class="card front"/>
+  <text x="714" y="296" class="kicker">SETTINGS</text>
+  <text x="714" y="326" class="cardTitle">设置和账号</text>
+  <text x="714" y="354" class="body">网易云登录、同步歌单、编辑偏好</text>
+  <text x="714" y="380" class="code">profile / settings / sw.js</text>
 
-  <rect x="90" y="816" width="250" height="74" class="card data"/>
-  <text x="112" y="844" class="box-title">StateStore</text>
-  <text x="112" y="866" class="box-sub">state.db: now, queue, plays</text>
-  <rect x="382" y="816" width="250" height="74" class="card data"/>
-  <text x="404" y="844" class="box-title">User taste files</text>
-  <text x="404" y="866" class="box-sub">user/users/&lt;uid&gt;/*.json, *.md</text>
-  <rect x="674" y="816" width="250" height="74" class="card data"/>
-  <text x="696" y="844" class="box-title">Prompts</text>
-  <text x="696" y="866" class="box-sub">prompts/dj-persona.md</text>
-  <rect x="966" y="816" width="250" height="74" class="card data"/>
-  <text x="988" y="844" class="box-title">TTS cache</text>
-  <text x="988" y="866" class="box-sub">cache/tts/*.mp3 served as /tts/*</text>
-  <rect x="1258" y="816" width="250" height="74" class="card data"/>
-  <text x="1280" y="844" class="box-title">Adapters</text>
-  <text x="1280" y="866" class="box-sub">ncm, weather, calendar, upnp</text>
+  <path class="flow" d="M548 452 L548 515"/>
 
-  <rect x="60" y="974" width="1560" height="96" class="panel"/>
-  <text x="84" y="1013" class="layer-title">4. 外部服务 / Optional integrations</text>
-  <rect x="90" y="1030" width="310" height="54" class="external"/>
-  <text x="112" y="1055" class="box-title">Netease Cloud Music API</text>
-  <text x="112" y="1075" class="box-sub">QR login, playlists, search, song URL, lyrics</text>
-  <rect x="440" y="1030" width="280" height="54" class="external"/>
-  <text x="462" y="1055" class="box-title">OpenAI-compatible LLM</text>
-  <text x="462" y="1075" class="box-sub">chat/completions JSON decisions</text>
-  <rect x="760" y="1030" width="270" height="54" class="external"/>
-  <text x="782" y="1055" class="box-title">StepFun / Fish TTS</text>
-  <text x="782" y="1075" class="box-sub">speech MP3 generation</text>
-  <rect x="1070" y="1030" width="220" height="54" class="external"/>
-  <text x="1092" y="1055" class="box-title">Weather / Calendar</text>
-  <text x="1092" y="1075" class="box-sub">current stub context</text>
-  <rect x="1330" y="1030" width="220" height="54" class="external"/>
-  <text x="1352" y="1055" class="box-title">UPnP device</text>
-  <text x="1352" y="1075" class="box-sub">local-browser placeholder</text>
+  <!-- 第二层：API连接交互 -->
+  <rect x="108" y="520" width="880" height="248" class="panel"/>
+  <text x="48" y="604" class="layerName">第二层</text>
+  <text x="17" y="632" class="layerHint">API 连接</text>
 
-  <path class="line-hot" d="M 600 285 C 600 344, 512 360, 512 422"/>
-  <text x="625" y="354" class="small">fetch REST</text>
-  <path class="line" d="M 915 285 C 915 352, 812 356, 812 422"/>
-  <text x="934" y="354" class="small">WS /stream</text>
-  <path class="line" d="M 1130 285 C 1184 342, 1392 358, 1392 422"/>
-  <text x="1194" y="354" class="small">audio src</text>
+  <rect x="136" y="550" width="260" height="156" class="card api"/>
+  <text x="154" y="576" class="kicker">HTTP API</text>
+  <text x="154" y="606" class="cardTitle">状态和业务接口</text>
+  <text x="154" y="633" class="code">GET /api/now</text>
+  <text x="154" y="657" class="code">POST /api/chat</text>
+  <text x="154" y="681" class="code">POST /api/radio/ensure</text>
 
-  <path class="line-hot" d="M 642 472 L 680 472"/>
-  <path class="line" d="M 934 472 L 970 472"/>
-  <path class="line" d="M 1226 472 L 1262 472"/>
-  <path class="line-soft" d="M 1060 518 C 1035 594, 794 617, 794 688"/>
+  <rect x="416" y="550" width="260" height="156" class="card api"/>
+  <text x="434" y="576" class="kicker">PLAYER / AUDIO</text>
+  <text x="434" y="606" class="cardTitle">播放和音频连接</text>
+  <text x="434" y="633" class="code">POST /api/player/*</text>
+  <text x="434" y="657" class="code">GET /api/player/audio</text>
+  <text x="434" y="681" class="code">GET /tts/&lt;hash&gt;.mp3</text>
 
-  <path class="line-hot" d="M 1100 518 C 1100 622, 798 630, 798 688"/>
-  <text x="908" y="612" class="small">build queue</text>
-  <path class="line" d="M 798 784 C 798 802, 798 802, 798 812"/>
-  <path class="line" d="M 632 738 L 668 738"/>
-  <path class="line" d="M 924 738 L 960 738"/>
-  <path class="line" d="M 1216 738 L 1252 738"/>
-  <path class="line-soft" d="M 506 784 C 506 808, 506 808, 506 812"/>
-  <path class="line-soft" d="M 214 784 C 214 808, 214 808, 214 812"/>
-  <path class="line-soft" d="M 1092 784 C 1092 808, 1092 808, 1092 812"/>
+  <rect x="696" y="550" width="260" height="156" class="card api"/>
+  <text x="714" y="576" class="kicker">PROFILE / LIVE</text>
+  <text x="714" y="606" class="cardTitle">资料和实时事件</text>
+  <text x="714" y="633" class="code">/api/ncm/* /api/taste</text>
+  <text x="714" y="657" class="code">GET/POST /api/settings</text>
+  <text x="714" y="681" class="code">WS /stream</text>
 
-  <path class="line" d="M 1384 890 C 1384 948, 245 955, 245 1026"/>
-  <path class="line" d="M 798 692 C 730 620, 574 1006, 574 1026"/>
-  <path class="line" d="M 1092 890 C 1092 956, 895 968, 895 1026"/>
-  <path class="line-soft" d="M 1384 890 C 1384 946, 1180 966, 1180 1026"/>
-  <path class="line-soft" d="M 1384 890 C 1440 948, 1440 972, 1440 1026"/>
+  <rect x="136" y="722" width="820" height="26" rx="6" fill="#061016" stroke="#213445" stroke-width="1"/>
+  <text x="154" y="741" class="noteText">这一层由 server/http.js 暴露：REST 负责命令和数据，WebSocket 负责 now-playing / queue-updated / host-speaking 推送。</text>
 
-  <rect x="1040" y="588" width="455" height="48" class="note"/>
-  <text x="1060" y="608" class="small">核心运行流：</text>
-  <text x="1060" y="628" class="small">chat/play/open -> routeIntent -> ContextBuilder -> AgentBrain -> hydrate tracks -> TTS -> StateStore -> WS broadcast</text>
+  <path class="flow" d="M548 768 L548 832"/>
+
+  <!-- 第三层：后端编排 -->
+  <rect x="108" y="838" width="880" height="226" class="panel"/>
+  <text x="48" y="916" class="layerName">第三层</text>
+  <text x="17" y="944" class="layerHint">后端编排</text>
+
+  <rect x="136" y="868" width="260" height="140" class="card core"/>
+  <text x="154" y="894" class="kicker2">SERVER / MAIN</text>
+  <text x="154" y="924" class="cardTitle2">服务入口</text>
+  <text x="154" y="952" class="body">启动 HTTP、WS、Scheduler</text>
+  <text x="154" y="978" class="code">node server/main.js</text>
+
+  <rect x="416" y="868" width="260" height="140" class="card core"/>
+  <text x="434" y="894" class="kicker2">RADIO RUNTIME</text>
+  <text x="434" y="924" class="cardTitle2">电台运行循环</text>
+  <text x="434" y="952" class="body">ensureRadio / runShow / refill</text>
+  <text x="434" y="978" class="code">queue size: 5 + 1</text>
+
+  <rect x="696" y="868" width="260" height="140" class="card core"/>
+  <text x="714" y="894" class="kicker2">EVENT BUS</text>
+  <text x="714" y="924" class="cardTitle2">状态落盘和广播</text>
+  <text x="714" y="952" class="body">StateStore 更新后推送前端</text>
+  <text x="714" y="978" class="code">state.update -> hub.broadcast</text>
+
+  <path class="flow" d="M548 1064 L548 1128"/>
+
+  <!-- 第四层：后端功能模块 -->
+  <rect x="108" y="1134" width="880" height="316" class="panel"/>
+  <text x="48" y="1248" class="layerName">第四层</text>
+  <text x="17" y="1276" class="layerHint">后端模块</text>
+
+  <rect x="136" y="1164" width="260" height="112" class="card module"/>
+  <text x="154" y="1190" class="kicker3">ROUTER</text>
+  <text x="154" y="1219" class="cardTitle3">意图分流</text>
+  <text x="154" y="1246" class="body">控制指令、音乐请求、普通对话</text>
+
+  <rect x="416" y="1164" width="260" height="112" class="card module"/>
+  <text x="434" y="1190" class="kicker3">CONTEXT</text>
+  <text x="434" y="1219" class="cardTitle3">上下文组装</text>
+  <text x="434" y="1246" class="body">提示词、偏好、环境、历史记忆</text>
+
+  <rect x="696" y="1164" width="260" height="112" class="card module"/>
+  <text x="714" y="1190" class="kicker3">AGENT / RECOMMEND</text>
+  <text x="714" y="1219" class="cardTitle3">推荐和选歌</text>
+  <text x="714" y="1246" class="body">候选池评分、去重、LLM 决策兜底</text>
+
+  <rect x="136" y="1294" width="260" height="112" class="card module"/>
+  <text x="154" y="1320" class="kicker3">NCM ADAPTER</text>
+  <text x="154" y="1349" class="cardTitle3">音乐服务适配</text>
+  <text x="154" y="1376" class="body">搜索、推荐、相似歌、取播放链接</text>
+
+  <rect x="416" y="1294" width="260" height="112" class="card module"/>
+  <text x="434" y="1320" class="kicker3">TTS PIPELINE</text>
+  <text x="434" y="1349" class="cardTitle3">主持人声音</text>
+  <text x="434" y="1376" class="body">Step / Fish 合成，浏览器语音兜底</text>
+
+  <rect x="696" y="1294" width="260" height="112" class="card module"/>
+  <text x="714" y="1320" class="kicker3">TASTE / CONFIG</text>
+  <text x="714" y="1349" class="cardTitle3">账号偏好和配置</text>
+  <text x="714" y="1376" class="body">歌单同步、画像生成、运行时设置</text>
+
+  <path class="flow" d="M548 1450 L548 1514"/>
+
+  <!-- 第五层：外部服务和数据 -->
+  <rect x="108" y="1520" width="880" height="116" class="panel"/>
+  <text x="48" y="1564" class="layerName">第五层</text>
+  <text x="17" y="1592" class="layerHint">数据/服务</text>
+
+  <rect x="136" y="1545" width="182" height="64" class="card data"/>
+  <text x="154" y="1570" class="cardTitle">本地数据</text>
+  <text x="154" y="1596" class="code">state.db / user/*</text>
+  <rect x="334" y="1545" width="182" height="64" class="card data"/>
+  <text x="352" y="1570" class="cardTitle">配置密钥</text>
+  <text x="352" y="1596" class="code">.env / settings</text>
+  <rect x="532" y="1545" width="182" height="64" class="card data"/>
+  <text x="550" y="1570" class="cardTitle">外部模型</text>
+  <text x="550" y="1596" class="code">OpenAI API</text>
+  <rect x="730" y="1545" width="226" height="64" class="card data"/>
+  <text x="748" y="1570" class="cardTitle">音乐和语音服务</text>
+  <text x="748" y="1596" class="code">NCM / Step / Fish</text>
+
+  <!-- 跨层辅助线 -->
+  <path class="flowSoft" d="M266 706 C266 805 266 822 266 868"/>
+  <path class="flowSoft" d="M826 706 C826 816 826 1100 826 1164"/>
+  <path class="flowSoft" d="M826 1406 C826 1465 843 1488 843 1545"/>
 </svg>
