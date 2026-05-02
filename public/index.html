@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#08090f">
     <title>Sonora AI Radio</title>
     <link rel="manifest" href="/manifest.json">
-    <link rel="stylesheet" href="/styles.css?v=46">
+    <link rel="stylesheet" href="/styles.css?v=51">
   </head>
   <body>
     <div class="noise-layer" aria-hidden="true"></div>
@@ -113,7 +113,7 @@
         <header class="drawer-header">
           <div>
             <p class="eyebrow">CONTROL ROOM</p>
-            <h2>Settings</h2>
+            <h2>Station Keys</h2>
           </div>
           <button id="closeSettings" class="close-button" type="button" aria-label="Close settings">×</button>
         </header>
@@ -121,18 +121,36 @@
         <section class="drawer-view active settings-key-view" id="settings-keys">
           <div class="settings-card settings-intro">
             <div>
-              <h3>Provider Keys</h3>
-              <p>Fill local credentials for LLM, TTS, and Netease services. Blank key fields keep the existing saved key.</p>
+              <h3>Signal Chain</h3>
+              <p>Account · Brain · Voice</p>
             </div>
             <span id="settingsStatus">Reading .env</span>
           </div>
 
           <form id="settingsForm" class="key-settings-form">
+            <section class="key-card ncm-key-card">
+              <header>
+                <div>
+                  <span class="key-card-kicker">ACCOUNT</span>
+                  <h3>Netease</h3>
+                </div>
+                <strong id="ncmKeyState">unset</strong>
+              </header>
+              <div class="ncm-card compact">
+                <img id="ncmAvatar" src="/assets/album-sonora.png" alt="Netease profile avatar">
+                <div>
+                  <strong id="ncmName">Not connected</strong>
+                  <span id="ncmSyncLine">Netease Cloud Music is waiting for login.</span>
+                </div>
+                <button id="syncNcmTaste" class="secondary-action" type="button">Sync</button>
+              </div>
+            </section>
+
             <section class="key-card">
               <header>
                 <div>
                   <span class="key-card-kicker">LLM</span>
-                  <h3>Chat Model</h3>
+                  <h3>Brain</h3>
                 </div>
                 <strong id="openaiKeyState">unset</strong>
               </header>
@@ -154,7 +172,7 @@
               <header>
                 <div>
                   <span class="key-card-kicker">VOICE</span>
-                  <h3>TTS Provider</h3>
+                  <h3>Host Voice</h3>
                 </div>
                 <strong id="ttsKeyState">unset</strong>
               </header>
@@ -182,28 +200,6 @@
                 <span>TTS_YUE_FEMALE_VOICE_ID</span>
                 <input id="ttsYueFemaleVoiceId" type="text" autocomplete="off" spellcheck="false">
               </label>
-            </section>
-
-            <section class="key-card">
-              <header>
-                <div>
-                  <span class="key-card-kicker">MUSIC</span>
-                  <h3>Netease API</h3>
-                </div>
-                <strong id="ncmKeyState">unset</strong>
-              </header>
-              <label>
-                <span>NCM_BASE_URL</span>
-                <input id="ncmBaseUrl" type="url" autocomplete="off" spellcheck="false">
-              </label>
-              <div class="ncm-card compact">
-                <img id="ncmAvatar" src="/assets/album-sonora.png" alt="Netease profile avatar">
-                <div>
-                  <strong id="ncmName">Not connected</strong>
-                  <span id="ncmSyncLine">Netease Cloud Music is waiting for login.</span>
-                </div>
-                <button id="syncNcmTaste" class="secondary-action" type="button">Sync</button>
-              </div>
             </section>
 
             <div class="settings-actions">
@@ -255,6 +251,6 @@
     </div>
 
     <audio id="audio" preload="metadata"></audio>
-    <script src="/app.js?v=46" type="module"></script>
+    <script src="/app.js?v=51" type="module"></script>
   </body>
 </html>

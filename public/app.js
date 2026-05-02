@@ -471,7 +471,7 @@ async function loadNcmStatus() {
   renderNcmProfile(data.profile, data.syncStatus);
   state.ncmLoggedIn = Boolean(data.loggedIn);
   refs.ncmLoginBtn.textContent = data.loggedIn ? "LOGOUT" : "LOGIN";
-  refs.ncmLoginBtn.title = data.configured ? "" : "Set NCM_BASE_URL to enable Netease login";
+  refs.ncmLoginBtn.title = data.configured ? "" : "Netease login service unavailable";
 }
 
 async function loadRuntimeSettings() {
@@ -503,9 +503,6 @@ async function saveRuntimeSettings(event) {
         voiceId: inputValue("ttsVoiceId"),
         englishMaleVoiceId: inputValue("ttsEnMaleVoiceId"),
         cantoneseFemaleVoiceId: inputValue("ttsYueFemaleVoiceId")
-      },
-      ncm: {
-        baseUrl: inputValue("ncmBaseUrl")
       }
     });
     renderRuntimeSettings(data);
@@ -530,7 +527,6 @@ function renderRuntimeSettings(data = {}) {
   setInputValue("ttsVoiceId", data.tts?.voiceId || "");
   setInputValue("ttsEnMaleVoiceId", data.tts?.englishMaleVoiceId || "");
   setInputValue("ttsYueFemaleVoiceId", data.tts?.cantoneseFemaleVoiceId || "");
-  setInputValue("ncmBaseUrl", data.ncm?.baseUrl || "");
   renderKeyState(refs.openaiKeyState, data.openai?.apiKey?.configured, data.openai?.apiKey?.last4);
   renderKeyState(refs.ttsKeyState, data.tts?.apiKey?.configured, data.tts?.apiKey?.last4 || data.tts?.provider);
   renderKeyState(refs.ncmKeyState, data.ncm?.configured, data.ncm?.configured ? "ready" : "");

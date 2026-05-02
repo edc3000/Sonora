@@ -584,13 +584,16 @@ input[type="url"],
 input[type="password"],
 input[type="text"] {
   width: 100%;
-  min-height: 42px;
+  min-height: 38px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.38);
+  background: #05060b;
+  background-image: none;
   color: var(--text);
-  padding: 0 13px;
+  padding: 0 12px;
   outline: none;
+  font-size: 12px;
+  line-height: 1.25;
 }
 
 input[type="url"]:focus,
@@ -1041,12 +1044,19 @@ body[data-theme="light"] .progress-wave span.is-played {
   top: 18px;
   right: 18px;
   bottom: 18px;
-  width: min(520px, calc(100vw - 36px));
-  padding: 24px;
+  width: min(500px, calc(100vw - 36px));
+  padding: 20px;
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: rgba(12, 13, 22, 0.96);
+  background:
+    radial-gradient(circle at 52% 28%, rgba(111, 169, 255, 0.11), transparent 32%),
+    radial-gradient(circle at 82% 74%, rgba(82, 244, 178, 0.07), transparent 28%),
+    radial-gradient(circle, rgba(150, 184, 226, 0.17) 1.4px, transparent 1.8px),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 4px),
+    linear-gradient(180deg, rgba(15, 16, 27, 0.98), rgba(8, 9, 15, 0.98));
+  background-size: 100% 100%, 100% 100%, 15px 15px, 100% 4px, 100% 100%;
+  font-size: 12px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.56);
   transform: translateX(18px);
   transition: transform 180ms ease;
@@ -1061,11 +1071,14 @@ body[data-theme="light"] .progress-wave span.is-played {
   justify-content: space-between;
   align-items: start;
   gap: 18px;
+  margin-bottom: 24px;
 }
 
 .drawer-header h2 {
   margin: 5px 0 0;
-  font-size: 26px;
+  font-size: 22px;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .close-button {
@@ -1110,7 +1123,7 @@ body[data-theme="light"] .progress-wave span.is-played {
 }
 
 .settings-key-view {
-  padding-bottom: 20px;
+  padding-bottom: 16px;
 }
 
 .settings-intro {
@@ -1123,30 +1136,29 @@ body[data-theme="light"] .progress-wave span.is-played {
 .settings-intro p {
   margin: 0;
   color: var(--muted);
-  line-height: 1.5;
+  line-height: 1.35;
 }
 
 .settings-intro span {
   flex: 0 0 auto;
   color: var(--mint);
-  letter-spacing: 0.06em;
   text-transform: uppercase;
+  font-size: 11px;
 }
 
 .key-settings-form {
   display: grid;
-  gap: 14px;
+  gap: 12px;
 }
 
 .key-card {
   display: grid;
-  gap: 14px;
-  padding: 16px;
+  gap: 12px;
+  padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background:
-    radial-gradient(circle at 100% 0%, rgba(111, 169, 255, 0.08), transparent 32%),
-    rgba(0, 0, 0, 0.3);
+  background: #07080f;
+  background-image: none;
 }
 
 .key-card header {
@@ -1154,13 +1166,15 @@ body[data-theme="light"] .progress-wave span.is-played {
   justify-content: space-between;
   gap: 14px;
   align-items: start;
-  padding-bottom: 8px;
+  padding-bottom: 7px;
   border-bottom: 1px solid var(--line);
 }
 
 .key-card h3 {
   margin: 3px 0 0;
-  font-size: 18px;
+  font-size: 16px;
+  line-height: 1.1;
+  text-transform: uppercase;
 }
 
 .key-card header strong {
@@ -1169,7 +1183,6 @@ body[data-theme="light"] .progress-wave span.is-played {
   background: rgba(255, 255, 255, 0.055);
   color: var(--muted);
   font-size: 10px;
-  letter-spacing: 0.08em;
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -1181,7 +1194,6 @@ body[data-theme="light"] .progress-wave span.is-played {
 
 .key-card-kicker {
   color: var(--dim);
-  letter-spacing: 0.16em;
   text-transform: uppercase;
   font-size: 10px;
 }
@@ -1192,8 +1204,8 @@ body[data-theme="light"] .progress-wave span.is-played {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  padding: 14px 0 2px;
-  background: linear-gradient(180deg, transparent, rgba(16, 18, 28, 0.96) 32%);
+  padding: 12px 0 2px;
+  background: #080912;
 }
 
 .action-group {
@@ -1231,7 +1243,8 @@ body[data-theme="light"] .progress-wave span.is-played {
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.32);
+  background: #05060b;
+  background-image: none;
 }
 
 .ncm-card img {
@@ -1253,6 +1266,10 @@ body[data-theme="light"] .progress-wave span.is-played {
   height: 40px;
 }
 
+.ncm-card.compact .secondary-action {
+  min-width: 82px;
+}
+
 .ncm-card strong,
 .ncm-card span {
   display: block;
@@ -1271,8 +1288,14 @@ body[data-theme="light"] .progress-wave span.is-played {
 
 label {
   display: grid;
-  gap: 8px;
+  gap: 7px;
   color: var(--muted);
+}
+
+label > span {
+  font-size: 11px;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 textarea,
@@ -1293,7 +1316,23 @@ pre {
 .state-list {
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.32);
+  background: #07080f;
+  background-image: none;
+}
+
+body[data-theme="light"] .settings-card,
+body[data-theme="light"] .state-list,
+body[data-theme="light"] .key-card,
+body[data-theme="light"] .ncm-card {
+  background: #fbfaf6;
+  background-image: none;
+}
+
+body[data-theme="light"] input[type="url"],
+body[data-theme="light"] input[type="password"],
+body[data-theme="light"] input[type="text"] {
+  background: #fffdf8;
+  background-image: none;
 }
 
 .settings-card {
