@@ -1,3 +1,4 @@
+import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { sendToMainDevice } from "./adapters/upnp.js";
@@ -175,13 +176,60 @@ async function serveTts(request, response, url, deps) {
       response.end();
       return;
     }
-    const body = await fs.readFile(filePath);
-    response.writeHead(200, { "content-type": "audio/mpeg", "cache-control": "public, max-age=31536000" });
-    response.end(body);
+    const headers = {
+      "content-type": "audio/mpeg",
+      "cache-control": "public, max-age=31536000",
+      "accept-ranges": "bytes"
+    };
+    const range = parseByteRange(request.headers.range, stat.size);
+    if (range === "invalid") {
+      response.writeHead(416, { ...headers, "content-range": `bytes */${stat.size}` });
+      response.end();
+      return;
+    }
+    if (range) {
+      response.writeHead(206, {
+        ...headers,
+        "content-length": String(range.end - range.start + 1),
+        "content-range": `bytes ${range.start}-${range.end}/${stat.size}`
+      });
+      createReadStream(filePath, { start: range.start, end: range.end }).pipe(response);
+      return;
+    }
+    response.writeHead(200, { ...headers, "content-length": String(stat.size) });
+    createReadStream(filePath).pipe(response);
   } catch {
     response.writeHead(204);
     response.end();
   }
+}
+
+function parseByteRange(header, size) {
+  if (!header) return null;
+  const match = String(header).match(/^bytes=(\d*)-(\d*)$/);
+  if (!match) return "invalid";
+  let start = match[1] === "" ? NaN : Number(match[1]);
+  let end = match[2] === "" ? NaN : Number(match[2]);
+
+  if (!Number.isFinite(start) && Number.isFinite(end)) {
+    start = Math.max(0, size - end);
+    end = size - 1;
+  } else {
+    if (!Number.isFinite(start)) start = 0;
+    if (!Number.isFinite(end)) end = size - 1;
+  }
+
+  if (
+    !Number.isInteger(start)
+    || !Number.isInteger(end)
+    || start < 0
+    || end < start
+    || start >= size
+  ) {
+    return "invalid";
+  }
+
+  return { start, end: Math.min(end, size - 1) };
 }
 
 async function readBody(request) {

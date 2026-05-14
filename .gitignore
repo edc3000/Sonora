@@ -8,6 +8,7 @@ cache/
 *.flac
 state.db
 .DS_Store
+.playwright-cli/
 user/ncm-session.json
 user/active-user.json
 user/users/

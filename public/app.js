@@ -35,7 +35,8 @@ const radio = {
   musicStartTimer: null,
   coverRefreshKey: "",
   progressPointerActive: false,
-  progressPointerHandled: false
+  progressPointerHandled: false,
+  seekWasRunning: false
 };
 let lastTranscriptKey = "";
 let lastTranscriptCue = -1;
@@ -1751,10 +1752,7 @@ function progressFromPointerEvent(event) {
   const trackLeft = rect.left + thumbInset;
   const trackRight = rect.right - thumbInset;
   const trackWidth = Math.max(1, trackRight - trackLeft);
-  const edgeSnap = Math.min(24, Math.max(10, trackWidth * 0.04));
-  let ratio = (event.clientX - trackLeft) / trackWidth;
-  if (event.clientX <= trackLeft + edgeSnap) ratio = 0;
-  if (event.clientX >= trackRight - edgeSnap) ratio = 1;
+  const ratio = (event.clientX - trackLeft) / trackWidth;
   return Math.min(duration, Math.max(0, ratio * duration));
 }
 
@@ -1767,6 +1765,7 @@ function seekFromProgressPointer(event, { start = false, commit = false, end = f
     if (event.button != null && event.button !== 0) return;
     radio.progressPointerActive = true;
     radio.progressPointerHandled = true;
+    radio.seekWasRunning = isProgramRunning();
     try {
       if (event.pointerId != null) (event.currentTarget || refs.progress).setPointerCapture(event.pointerId);
     } catch {
@@ -1791,6 +1790,7 @@ function seekFromProgressPointer(event, { start = false, commit = false, end = f
 }
 
 async function seekFromProgressControl({ commit = false } = {}) {
+  if (!radio.isSeeking) radio.seekWasRunning = isProgramRunning();
   return seekToProgramTime(Number(refs.progress.value || 0), { commit });
 }
 
@@ -1801,56 +1801,14 @@ async function seekToProgramTime(targetProgress, { commit = false } = {}) {
   radio.isSeeking = true;
   const progress = Math.min(duration, Math.max(0, Number(targetProgress || 0)));
   refs.progress.value = String(progress);
-  const introActive = introActiveAtProgramProgress(progress);
-  const trackActive = trackActiveAtProgramProgress(progress);
-  const trackProgress = trackProgressForProgramProgress(progress);
-  const wasRunning = isProgramRunning();
 
   try {
-    radio.programPhase = phaseForProgramProgress(progress);
-    radio.transcriptTime = Math.min(progress, introDuration());
-    radio.pendingIntroSeek = radio.transcriptTime;
-    state.now.progress = trackProgress;
-
-    if (introActive) {
-      seekHostIntro(progress);
-    } else {
-      hostAudio.pause();
-      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-    }
-
-    if (trackActive) {
-      syncAudioProgress(state.now.track, trackProgress, { force: true });
-    } else {
-      audio.pause();
-    }
-
-    renderTranscript({
-      ...state.now,
-      status: introActive ? (wasRunning ? "speaking" : "paused") : (wasRunning ? "playing" : "paused"),
-      progress: trackProgress
-    });
     renderProgress();
-    updateTranscriptProgress();
 
     if (commit) {
-      if (wasRunning) {
-        playProgramFrom(progress);
-      } else {
-        clearMusicStartTimer();
-        hostAudio.pause();
-        audio.pause();
-        radio.isProgramPlaying = false;
-        const next = await postJson("/api/player/seek", { progress: trackProgress, status: "paused", silent: true });
-        if (String(next.track?.id || "") === String(state.now?.track?.id || "")) {
-          renderNow({ ...next, status: "paused", progress: trackProgress }, {
-            preserveHostAudio: true,
-            suppressSequence: true,
-            preservePhase: true
-          });
-          refs.progress.value = String(progress);
-        }
-      }
+      await commitProgramSeek(progress, radio.seekWasRunning);
+    } else {
+      updateTranscriptPreview(progress);
     }
   } catch {
     logEvent("seek failed");
@@ -1862,6 +1820,7 @@ async function seekToProgramTime(targetProgress, { commit = false } = {}) {
       updatePlayButton();
     } else {
       radio.seekReleaseTimer = setTimeout(() => {
+        if (radio.progressPointerActive) return;
         radio.isSeeking = false;
         renderProgress();
         updateTranscriptProgress();
@@ -1869,6 +1828,73 @@ async function seekToProgramTime(targetProgress, { commit = false } = {}) {
       }, 450);
     }
   }
+}
+
+async function commitProgramSeek(progress, shouldPlay) {
+  const introActive = introActiveAtProgramProgress(progress);
+  const trackActive = trackActiveAtProgramProgress(progress);
+  const trackProgress = trackProgressForProgramProgress(progress);
+  const status = shouldPlay
+    ? (introActive ? "speaking" : "playing")
+    : "paused";
+
+  clearMusicStartTimer();
+  radio.programPhase = phaseForProgramProgress(progress);
+  radio.transcriptTime = Math.min(progress, introDuration());
+  radio.pendingIntroSeek = radio.transcriptTime;
+  radio.isProgramPlaying = Boolean(shouldPlay);
+  state.now.progress = trackProgress;
+  refs.progress.value = String(progress);
+
+  if (introActive) {
+    if (shouldPlay) startHostIntroPlayback(radio.transcriptTime);
+    else {
+      seekHostIntro(radio.transcriptTime);
+      hostAudio.pause();
+    }
+  } else {
+    hostAudio.pause();
+    radio.pendingIntroSeek = null;
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  }
+
+  if (trackActive) {
+    syncAudioProgress(state.now.track, trackProgress, { force: true });
+    if (shouldPlay) startTrackPlaybackAtProgramProgress(progress, { notify: !introActive });
+    else audio.pause();
+  } else {
+    audio.pause();
+    if (shouldPlay) scheduleTrackStart(progress);
+  }
+
+  renderTranscript({
+    ...state.now,
+    status,
+    progress: trackProgress
+  });
+  renderProgress();
+  updateTranscriptProgress();
+  updatePlayButton();
+
+  if (!shouldPlay) {
+    const next = await postJson("/api/player/seek", { progress: trackProgress, status: "paused", silent: true });
+    if (String(next.track?.id || "") === String(state.now?.track?.id || "")) {
+      state.now = { ...next, status: "paused", progress: trackProgress };
+      refs.progress.value = String(progress);
+      renderProgress();
+      updateTranscriptProgress();
+    }
+  } else {
+    postJson("/api/player/seek", { progress: trackProgress, status, silent: true }).catch(() => logEvent("seek sync failed"));
+  }
+}
+
+function updateTranscriptPreview(progress) {
+  const mode = refs.hostScript.dataset.mode || "";
+  if (mode === "intro" || introActiveAtProgramProgress(progress)) {
+    radio.transcriptTime = Math.min(progress, introDuration());
+  }
+  updateTranscriptProgress();
 }
 
 function logEvent(text) {
