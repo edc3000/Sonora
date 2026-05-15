@@ -6,7 +6,8 @@
   "description": "Personal AI radio PWA with local brain, OpenAI-compatible agent adapter, music provider adapter, TTS cache, HTTP API, and WebSocket stream.",
   "scripts": {
     "start": "node server/main.js",
-    "dev": "node server/main.js"
+    "dev": "node server/main.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=18"

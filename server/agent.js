@@ -1,3 +1,5 @@
+import { compactTrackStory } from "./intro.js";
+
 export class AgentBrain {
   constructor({ openai = {}, ncm }) {
     this.openai = openai;
@@ -7,15 +9,26 @@ export class AgentBrain {
   async compute(contextPacket) {
     const candidatePool = await this.buildCandidatePool(contextPacket.fragments);
     const enrichedPacket = enrichContextPacket(contextPacket, candidatePool);
-    const raw = await withTimeout(this.callProvider(enrichedPacket), 18000, null).catch(() => null);
+    const t0 = Date.now();
+    const raw = await withTimeout(this.callProvider(enrichedPacket), 60000, null).catch((err) => {
+      console.error("[agent] LLM call rejected:", err?.message || err);
+      return null;
+    });
+    console.error(`[agent] LLM call done in ${Date.now() - t0}ms, raw.length=${raw ? String(raw).length : 0}`);
     const parsed = raw ? parseAgentJson(raw) : null;
+    if (raw && !parsed) console.error("[agent] LLM raw did not parse as JSON. First 300 chars:", String(raw).slice(0, 300));
     const result = parsed || await this.fallback(enrichedPacket.fragments);
     return completeQueue(normalizeResult(result), candidatePool);
   }
 
   async callProvider({ messages }) {
-    if (!this.openai.baseUrl || !this.openai.apiKey) return null;
-    const response = await fetch(chatCompletionsUrl(this.openai), {
+    if (!this.openai.baseUrl || !this.openai.apiKey) {
+      console.error("[agent] callProvider skipped: missing baseUrl or apiKey");
+      return null;
+    }
+    const url = chatCompletionsUrl(this.openai);
+    console.error(`[agent] POST ${url} model=${this.openai.model}`);
+    const response = await fetch(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -28,7 +41,10 @@ export class AgentBrain {
         response_format: { type: "json_object" }
       })
     });
-    if (!response.ok) throw new Error(`LLM request failed: ${response.status}`);
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`LLM request failed: ${response.status} ${body.slice(0, 300)}`);
+    }
     const data = await response.json();
     return data.choices?.[0]?.message?.content || "";
   }
@@ -153,6 +169,8 @@ export class AgentBrain {
         id: seed.id,
         title: seed.title,
         artist: seed.artist,
+        album: seed.album,
+        publish_date: seed.publish_date,
         source: "netease:liked-seed",
         url: "",
         cover: "/assets/album-sonora.png",
@@ -199,7 +217,13 @@ function enrichContextPacket(contextPacket, candidatePool) {
     selectionPolicy: {
       rule: "Build the play queue from toolResults.candidatePool whenever possible. Preserve candidate id/source/cover/duration fields. Pick tracks that fit userTaste, currentInput, time, and recentPlays; avoid repeats.",
       queueSize: "6 tracks",
-      introRule: "Every selected track must include an intro written in natural English from the start. Write like a real radio host: mention the song and artist, add one specific detail about style, mood, era, scene, lyric feeling, or artist background, and explain why it fits this set. Keep it under 45 words. Do not write Chinese narration; Chinese song and artist names are allowed only as proper nouns."
+      introRule: [
+        "Every selected track must include an intro written in natural English from the start.",
+        "Make the intro story-linked: anchor it in at least one concrete song detail from trackStory when available, such as album, year, source trail, seed, lyric image, artist background, or why this exact song follows from the user's taste.",
+        "Do not use generic praise like 'great song', 'nice mood', 'fits the vibe', or 'without stealing focus' unless it is tied to a specific song detail.",
+        "Mention the song and artist, then give one emotionally precise hook that makes the listener curious before the music starts.",
+        "Keep it under 55 words. Do not write Chinese narration; Chinese song and artist names are allowed only as proper nouns."
+      ].join(" ")
     },
     toolResults: {
       ...(contextPacket.fragments.toolResults || {}),
@@ -225,6 +249,9 @@ function compactCandidateForPrompt(song) {
     cover: song.cover,
     duration: song.duration,
     intro: song.intro,
+    album: song.album,
+    year: song.publishTime || song.publish_date || song.year,
+    trackStory: compactTrackStory(song),
     score: Math.round(song.score || 0),
     reasons: song.reasons
   };

@@ -1,5 +1,5 @@
-const CACHE = "sonora-v51";
-const ASSETS = ["/", "/index.html", "/styles.css?v=51", "/app.js?v=51", "/manifest.json", "/assets/album-sonora.png"];
+const CACHE = "sonora-v62";
+const ASSETS = ["/", "/index.html", "/styles.css?v=62", "/app.js?v=62", "/manifest.json", "/assets/album-sonora.png"];
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
@@ -15,7 +15,28 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/tts/") || url.pathname === "/stream") return;
+  const appShellAsset = event.request.mode === "navigate"
+    || url.pathname === "/"
+    || url.pathname === "/index.html"
+    || url.pathname === "/styles.css"
+    || url.pathname === "/app.js"
+    || url.pathname === "/sw.js";
+  if (appShellAsset) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+          return response;
+        })
+        .catch(() => caches.match(event.request).then((cached) => cached || caches.match("/")))
+    );
+    return;
+  }
   event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request).then((cached) => cached || caches.match("/")))
+    caches.match(event.request).then((cached) => cached || fetch(event.request))
   );
 });

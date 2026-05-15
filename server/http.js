@@ -157,11 +157,14 @@ async function serveStatic(request, response, url, publicDir) {
   if (!filePath.startsWith(publicDir)) return sendJson(response, 403, { error: "Forbidden" });
   try {
     const body = await fs.readFile(filePath);
-    response.writeHead(200, { "content-type": mime[path.extname(filePath)] || "application/octet-stream" });
+    const headers = { "content-type": mime[path.extname(filePath)] || "application/octet-stream" };
+    if (requested === "/sw.js") headers["cache-control"] = "no-store";
+    if (requested === "/index.html") headers["cache-control"] = "no-cache";
+    response.writeHead(200, headers);
     response.end(body);
   } catch {
     const body = await fs.readFile(path.join(publicDir, "index.html"));
-    response.writeHead(200, { "content-type": mime[".html"] });
+    response.writeHead(200, { "content-type": mime[".html"], "cache-control": "no-cache" });
     response.end(body);
   }
 }

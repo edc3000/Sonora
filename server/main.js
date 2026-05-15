@@ -12,6 +12,7 @@ import { RadioScheduler } from "./scheduler.js";
 import { TtsPipeline } from "./tts.js";
 import { WebSocketHub } from "./ws.js";
 import { createHandler } from "./http.js";
+import { selectIntroForTrack } from "./intro.js";
 import {
   activateNcmUser,
   deactivateNcmUser,
@@ -45,6 +46,9 @@ const TARGET_QUEUE_SIZE = 5;
 const TARGET_SET_SIZE = TARGET_QUEUE_SIZE + 1;
 let refillPromise = null;
 let warmQueuePromise = null;
+let prepareCurrentPromise = null;
+
+await repairStoredIntros();
 
 async function readTaste() {
   const activeUserDir = await getActiveNcmUserDir(config.userDir);
@@ -355,6 +359,8 @@ function fillQueueFromTasteSeeds(tracks = [], fragments = {}) {
       id: String(seed.id || ""),
       title: seed.title,
       artist: seed.artist,
+      album: seed.album,
+      publish_date: seed.publish_date,
       source: "netease:liked-seed",
       url: "",
       cover: "/assets/album-sonora.png",
@@ -379,7 +385,6 @@ function withTimeout(promise, ms, fallback) {
 }
 
 async function nextTrack() {
-  let trackToPrepare = null;
   if (!(state.snapshot.now.queue || []).length) {
     await refillQueue({ trigger: "empty-next" });
   }
@@ -391,13 +396,12 @@ async function nextTrack() {
       current.now.queue = rest;
       current.now.progress = 0;
       current.now.status = "speaking";
-      next.intro = next.intro || introForTrack(next, { index: 0, reason: current.now.reason });
+      applySelectedIntro(next, { index: 0, reason: current.now.reason });
       current.now.host = next.intro;
       current.now.introId = crypto.randomUUID();
       current.now.ttsUrl = hasFreshIntroTts(next) ? next.introTtsUrl : "";
       current.now.ttsProvider = hasFreshIntroTts(next) ? next.introTtsProvider : "";
       current.now.ttsError = hasFreshIntroTts(next) ? next.introTtsError : "";
-      trackToPrepare = next;
       current.plays.unshift({
         id: crypto.randomUUID(),
         playedAt: new Date().toISOString(),
@@ -416,34 +420,9 @@ async function nextTrack() {
     }
     return current;
   });
-  if (trackToPrepare && (!hasFreshIntroTts(trackToPrepare) || !trackToPrepare.lyricLines?.length)) {
-    if (!trackToPrepare.lyricLines?.length) {
-      trackToPrepare = await ncm.hydrateTrack(trackToPrepare);
-      await state.update((current) => {
-        if (String(current.now.track?.id) === String(trackToPrepare.id)) {
-          current.now.track = { ...current.now.track, ...trackToPrepare };
-        }
-        return current;
-      });
-    }
-    if (trackToPrepare && !hasFreshIntroTts(trackToPrepare)) {
-      const speech = await tts.synthesize(trackToPrepare.intro, tts.optionsForTrack(trackToPrepare));
-      await state.update((current) => {
-        if (String(current.now.track?.id) === String(trackToPrepare.id)) {
-          current.now.track.introTtsUrl = speech.url;
-          current.now.track.introTtsProvider = speech.provider;
-          current.now.track.introTtsError = speech.error || "";
-          current.now.track.introTtsStyle = speech.url ? tts.styleVersion() : "";
-          current.now.ttsUrl = speech.url;
-          current.now.ttsProvider = speech.provider;
-          current.now.ttsError = speech.error || "";
-        }
-        return current;
-      });
-    }
-  }
   hub.broadcast("track-ended", state.snapshot.now);
   hub.broadcast("now-playing", state.snapshot.now);
+  prepareCurrentTrack().catch((error) => console.warn(`Prepare current failed: ${error.message}`));
   const remaining = state.snapshot.now.queue?.length || 0;
   if (remaining <= MIN_QUEUE_SIZE) {
     refillQueue({ trigger: "low-watermark" }).catch((error) => console.warn(`Queue refill failed: ${error.message}`));
@@ -453,7 +432,6 @@ async function nextTrack() {
 }
 
 async function previousTrack() {
-  let trackToPrepare = null;
   await state.update((current) => {
     const [previous, ...history] = current.now.history || [];
     if (previous) {
@@ -462,13 +440,12 @@ async function previousTrack() {
       current.now.track = previous;
       current.now.progress = 0;
       current.now.status = "speaking";
-      previous.intro = previous.intro || introForTrack(previous, { index: 0, reason: current.now.reason });
+      applySelectedIntro(previous, { index: 0, reason: current.now.reason });
       current.now.host = previous.intro;
       current.now.introId = crypto.randomUUID();
       current.now.ttsUrl = hasFreshIntroTts(previous) ? previous.introTtsUrl : "";
       current.now.ttsProvider = hasFreshIntroTts(previous) ? previous.introTtsProvider : "";
       current.now.ttsError = hasFreshIntroTts(previous) ? previous.introTtsError : "";
-      trackToPrepare = previous;
     } else {
       current.now.status = current.now.track ? "paused" : "idle";
       current.now.host = current.now.track
@@ -481,34 +458,9 @@ async function previousTrack() {
     }
     return current;
   });
-  if (trackToPrepare && (!hasFreshIntroTts(trackToPrepare) || !trackToPrepare.lyricLines?.length)) {
-    if (!trackToPrepare.lyricLines?.length) {
-      trackToPrepare = await ncm.hydrateTrack(trackToPrepare);
-      await state.update((current) => {
-        if (String(current.now.track?.id) === String(trackToPrepare.id)) {
-          current.now.track = { ...current.now.track, ...trackToPrepare };
-        }
-        return current;
-      });
-    }
-    if (trackToPrepare && !hasFreshIntroTts(trackToPrepare)) {
-      const speech = await tts.synthesize(trackToPrepare.intro, tts.optionsForTrack(trackToPrepare));
-      await state.update((current) => {
-        if (String(current.now.track?.id) === String(trackToPrepare.id)) {
-          current.now.track.introTtsUrl = speech.url;
-          current.now.track.introTtsProvider = speech.provider;
-          current.now.track.introTtsError = speech.error || "";
-          current.now.track.introTtsStyle = speech.url ? tts.styleVersion() : "";
-          current.now.ttsUrl = speech.url;
-          current.now.ttsProvider = speech.provider;
-          current.now.ttsError = speech.error || "";
-        }
-        return current;
-      });
-    }
-  }
   hub.broadcast("now-playing", state.snapshot.now);
   hub.broadcast("queue-updated", { queue: state.snapshot.now.queue });
+  prepareCurrentTrack().catch((error) => console.warn(`Prepare current failed: ${error.message}`));
   warmQueueTts({ limit: 2 });
   return state.snapshot.now;
 }
@@ -527,12 +479,13 @@ async function refreshCurrentTrackAudio() {
     current.now.track = {
       ...current.now.track,
       ...refreshed,
-      intro: current.now.track.intro || refreshed.intro,
       introTtsUrl: current.now.track.introTtsUrl || refreshed.introTtsUrl || "",
       introTtsProvider: current.now.track.introTtsProvider || refreshed.introTtsProvider || "",
       introTtsError: current.now.track.introTtsError || refreshed.introTtsError || "",
       introTtsStyle: current.now.track.introTtsStyle || refreshed.introTtsStyle || ""
     };
+    applySelectedIntro(current.now.track, { index: 0, reason: current.now.reason });
+    if (current.now.status === "speaking") current.now.host = current.now.track.intro;
     return current;
   });
   hub.broadcast("now-playing", state.snapshot.now);
@@ -559,6 +512,8 @@ async function streamTrackAudio(id, request, response) {
       headers: {
         "user-agent": "Mozilla/5.0 Sonora/0.1",
         "referer": "https://music.163.com/",
+        "accept-encoding": "identity",
+        connection: "keep-alive",
         ...(request.headers.range ? { range: request.headers.range } : {})
       }
     }).catch(() => null);
@@ -617,6 +572,54 @@ function hasFreshIntroTts(track = {}) {
   return Boolean(track?.introTtsUrl && track?.introTtsStyle === tts.styleVersion());
 }
 
+function applySelectedIntro(track, options = {}) {
+  if (!track) return "";
+  const intro = selectIntroForTrack(track, options);
+  if (intro && intro !== track.intro) {
+    track.intro = intro;
+    track.introTtsUrl = "";
+    track.introTtsProvider = "";
+    track.introTtsError = "";
+    track.introTtsStyle = "";
+  }
+  return track.intro || intro || "";
+}
+
+async function repairStoredIntros() {
+  let changed = false;
+  await state.update((current) => {
+    const reason = current.now.reason || "";
+    const currentIntro = current.now.track?.intro || "";
+    if (current.now.track) {
+      applySelectedIntro(current.now.track, { index: 0, reason });
+      if (current.now.track.intro !== currentIntro) {
+        changed = true;
+        if (current.now.host === currentIntro || current.now.status === "speaking") {
+          current.now.host = current.now.track.intro;
+          current.now.introId = crypto.randomUUID();
+          current.now.ttsUrl = "";
+          current.now.ttsProvider = "";
+          current.now.ttsError = "";
+        }
+      }
+    }
+    current.now.queue = (current.now.queue || []).map((track, index) => {
+      const before = track?.intro || "";
+      applySelectedIntro(track, { index: index + 1, reason });
+      if (track?.intro !== before) changed = true;
+      return track;
+    });
+    current.now.history = (current.now.history || []).map((track, index) => {
+      const before = track?.intro || "";
+      applySelectedIntro(track, { index: index + 1, reason });
+      if (track?.intro !== before) changed = true;
+      return track;
+    });
+    return current;
+  });
+  return changed;
+}
+
 async function refreshCurrentIntroTts(track) {
   const speech = await tts.synthesize(track.intro, tts.optionsForTrack(track));
   await state.update((current) => {
@@ -639,7 +642,7 @@ async function refreshCurrentIntroTts(track) {
 
 async function prepareRadioTracks(tracks, decision, { ttsMode = "first" } = {}) {
   return Promise.all(tracks.map(async (track, index) => {
-    const intro = track.intro || introForTrack(track, { index, reason: decision.reason });
+    const intro = selectIntroForTrack(track, { index, reason: decision.reason });
     const shouldSynthesize = intro && (ttsMode === "all" || (ttsMode === "first" && index === 0));
     const speech = shouldSynthesize ? await tts.synthesize(intro, tts.optionsForTrack(track)) : { url: "" };
     return {
@@ -651,6 +654,57 @@ async function prepareRadioTracks(tracks, decision, { ttsMode = "first" } = {}) 
       introTtsStyle: speech.url ? tts.styleVersion() : ""
     };
   }));
+}
+
+function prepareCurrentTrack() {
+  if (prepareCurrentPromise) return prepareCurrentPromise;
+  prepareCurrentPromise = prepareCurrentTrackNow().finally(() => {
+    prepareCurrentPromise = null;
+  });
+  return prepareCurrentPromise;
+}
+
+async function prepareCurrentTrackNow() {
+  const startTrack = state.snapshot.now.track;
+  if (!startTrack) return;
+  const trackId = String(startTrack.id || "");
+  let working = startTrack;
+
+  if (!working.lyricLines?.length || !working.url) {
+    const hydrated = await ncm.hydrateTrack(working).catch(() => null);
+    if (hydrated && String(state.snapshot.now.track?.id || "") === trackId) {
+      await state.update((current) => {
+        if (String(current.now.track?.id || "") !== trackId) return current;
+        current.now.track = { ...current.now.track, ...hydrated };
+        applySelectedIntro(current.now.track, { index: 0, reason: current.now.reason });
+        if (current.now.status === "speaking") current.now.host = current.now.track.intro;
+        return current;
+      });
+      working = state.snapshot.now.track;
+      hub.broadcast("now-playing", state.snapshot.now);
+    }
+  }
+
+  if (!working || String(state.snapshot.now.track?.id || "") !== trackId) return;
+  if (hasFreshIntroTts(working)) return;
+
+  const speech = await tts.synthesize(working.intro, tts.optionsForTrack(working));
+  if (String(state.snapshot.now.track?.id || "") !== trackId) return;
+  await state.update((current) => {
+    if (String(current.now.track?.id || "") !== trackId) return current;
+    current.now.track = {
+      ...current.now.track,
+      introTtsUrl: speech.url,
+      introTtsProvider: speech.provider,
+      introTtsError: speech.error || "",
+      introTtsStyle: speech.url ? tts.styleVersion() : ""
+    };
+    current.now.ttsUrl = speech.url;
+    current.now.ttsProvider = speech.provider;
+    current.now.ttsError = speech.error || "";
+    return current;
+  });
+  hub.broadcast("now-playing", state.snapshot.now);
 }
 
 function warmQueueTts({ limit = 2 } = {}) {
@@ -704,70 +758,6 @@ async function warmQueueTtsNow({ limit = 2 } = {}) {
     hub.broadcast("now-playing", state.snapshot.now);
   }
   return state.snapshot.now;
-}
-
-function introForTrack(track, { index = 0, reason = "" } = {}) {
-  if (!track?.title) return "";
-  const title = track.title;
-  const artist = track.artist || "this artist";
-  const reasons = Array.isArray(track.reasons) ? track.reasons.join("; ") : "";
-  const context = englishTrackContext(track);
-  const placement = index === 0 ? "We are opening with" : "Coming up next";
-  const fit = reason || reasons
-    ? "It matches the emotional thread of this set without pulling too much focus."
-    : "It gives the room a little shape without getting in the way.";
-  return `${placement} ${title} by ${artist}. ${context} ${fit}`.replace(/\s+/g, " ").trim().slice(0, 500);
-}
-
-function englishTrackContext(track = {}) {
-  const text = `${track.title || ""} ${track.artist || ""} ${track.album || ""}`.toLowerCase();
-  if (/the chairs|椅子/.test(text)) {
-    return "The Chairs bring that soft Taiwanese indie-pop glow: close harmonies, unhurried guitars, and a melody that feels hand-drawn.";
-  }
-  if (/周柏豪|pakho/.test(text) && /卫兰|衛蘭|janice/.test(text)) {
-    return "It is a Cantonese pop duet built on restraint, where two familiar voices trade tenderness instead of drama.";
-  }
-  if (/周柏豪|pakho/.test(text)) {
-    return "Pakho Chau is at his best in this kind of late-night Cantopop ballad, keeping the feeling controlled but unmistakably present.";
-  }
-  if (/陈奕迅|陳奕迅|eason/.test(text)) {
-    return "Eason Chan turns a pop song into a small piece of theatre, letting the lyric land through phrasing more than volume.";
-  }
-  if (/容祖儿|容祖兒|joey/.test(text)) {
-    return "Joey Yung carries the song with a polished Cantopop clarity, making the hook feel graceful rather than oversized.";
-  }
-  if (/杨千嬅|楊千嬅|miriam/.test(text)) {
-    return "Miriam Yeung brings that bright, bruised Hong Kong-pop character: direct, resilient, and quietly cinematic.";
-  }
-  if (/张敬轩|張敬軒|hins/.test(text)) {
-    return "Hins Cheung leans into the song with the precision of a classic Cantopop balladeer, measured but emotionally open.";
-  }
-  if (/dear jane|rubberband|beyond/.test(text)) {
-    return "It sits in the Hong Kong band tradition, with guitars carrying the emotion as much as the vocal line.";
-  }
-  if (isCantoneseTrack(track)) {
-    return "This is Cantopop in its intimate mode: melodic, lyrical, and built for the small private weather of the day.";
-  }
-  return "It has the kind of melodic detail that rewards close listening while still leaving space for whatever you are doing.";
-}
-
-function isCantoneseTrack(track = {}) {
-  const text = `${track.title || ""} ${track.artist || ""} ${track.album || ""}`.toLowerCase();
-  if (/(粤|粵|廣東|广东|cantonese|cantopop|\(yue\)|（粤）|（粵）|粤语|粵語)/i.test(text)) return true;
-  const cantoneseArtists = [
-    "陈奕迅", "陳奕迅", "eason chan", "张敬轩", "張敬軒", "hins cheung",
-    "谢安琪", "謝安琪", "kay tse", "容祖儿", "容祖兒", "joey yung",
-    "杨千嬅", "楊千嬅", "miriam yeung", "郑秀文", "鄭秀文", "sammi cheng",
-    "王菲", "faye wong", "林忆莲", "林憶蓮", "sandy lam", "卢巧音", "盧巧音",
-    "卫兰", "衛蘭", "janice vidal", "麦浚龙", "麥浚龍", "juno mak",
-    "方皓玟", "charmaine fong", "my little airport", "dear jane", "rubberband",
-    "古巨基", "leo ku", "张学友", "張學友", "jacky cheung", "林家谦", "林家謙",
-    "terence lam", "陈柏宇", "陳柏宇", "jason chan", "薛凯琪", "薛凱琪",
-    "周柏豪", "pakho chau", "林二汶", "at17", "twins", "beyond", "黄耀明", "黃耀明"
-  ];
-  if (cantoneseArtists.some((artist) => text.includes(artist.toLowerCase()))) return true;
-  const traditionalOrCantoneseChars = text.match(/[嘅咗佢哋唔啲喺冇嚟嚿嗰俾畀諗睇聽講會愛無裡裏風開點]/g) || [];
-  return traditionalOrCantoneseChars.length >= 2;
 }
 
 const scheduler = new RadioScheduler({

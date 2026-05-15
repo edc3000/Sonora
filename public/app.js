@@ -36,7 +36,9 @@ const radio = {
   coverRefreshKey: "",
   progressPointerActive: false,
   progressPointerHandled: false,
-  seekWasRunning: false
+  seekWasRunning: false,
+  introPlaybackToken: 0,
+  trackPlaybackToken: 0
 };
 let lastTranscriptKey = "";
 let lastTranscriptCue = -1;
@@ -93,6 +95,35 @@ class AmbientEngine {
 }
 
 const ambient = new AmbientEngine();
+let hostVoiceOutput = null;
+
+function ensureHostVoiceOutput() {
+  if (hostVoiceOutput) return hostVoiceOutput;
+  const context = ambient.ensureContext();
+  if (!context) return null;
+  try {
+    const source = context.createMediaElementSource(hostAudio);
+    const splitter = context.createChannelSplitter(2);
+    const mono = context.createGain();
+    const merger = context.createChannelMerger(2);
+    mono.gain.value = 0.75;
+    source.connect(splitter);
+    splitter.connect(mono, 0);
+    splitter.connect(mono, 1);
+    mono.connect(merger, 0, 0);
+    mono.connect(merger, 0, 1);
+    merger.connect(context.destination);
+    hostVoiceOutput = { context };
+  } catch {
+    hostVoiceOutput = null;
+  }
+  return hostVoiceOutput;
+}
+
+function resumeHostVoiceOutput() {
+  const output = ensureHostVoiceOutput();
+  if (output?.context?.state === "suspended") output.context.resume();
+}
 
 const refs = {
   hostState: $("hostState"),
@@ -174,7 +205,11 @@ async function init() {
   bindControls();
   await Promise.all([loadNow(), loadPlan(), loadTaste(), loadNcmStatus(), loadRuntimeSettings()]);
   connectStream();
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" })
+      .then((registration) => registration.update())
+      .catch(() => {});
+  }
 }
 
 function buildProgressWave() {
@@ -204,7 +239,10 @@ function loadSpeechVoices() {
 }
 
 function bindThemeSwitch() {
-  const saved = localStorage.getItem("sonora-theme") || "dark";
+  const urlTheme = new URLSearchParams(location.search).get("theme");
+  const saved = urlTheme === "light" || urlTheme === "dark"
+    ? urlTheme
+    : (localStorage.getItem("sonora-theme") || "dark");
   setTheme(saved);
   document.querySelectorAll("[data-theme-button]").forEach((button) => {
     button.addEventListener("click", () => setTheme(button.dataset.themeButton));
@@ -341,12 +379,13 @@ function bindControls() {
 
   refs.playBtn.addEventListener("click", async () => {
     ambient.ensureContext();
-    primeHostAudio();
     if (!state.now?.track) {
+      primeHostAudio();
       const next = await postJson("/api/radio/ensure", { trigger: "play" });
       renderNow(next);
       return;
     }
+    if (!isProgramRunning()) primeHostAudio();
     await toggleProgramPlayback();
   });
 
@@ -391,7 +430,7 @@ function bindControls() {
   hostAudio.addEventListener("timeupdate", () => {
     if (!isHostPhaseActive() || radio.isSeeking) return;
     radio.transcriptTime = introPlaybackTime();
-    if (radio.transcriptTime >= musicStartOffset() && !isMediaPlaying(audio)) {
+    if (radio.isProgramPlaying && radio.transcriptTime >= musicStartOffset() && !isMediaPlaying(audio)) {
       startTrackPlaybackAtProgramProgress(radio.transcriptTime, { notify: false });
     }
     renderProgress();
@@ -413,13 +452,6 @@ function bindControls() {
   progressTarget.addEventListener("pointermove", (event) => seekFromProgressPointer(event), { capture: true });
   progressTarget.addEventListener("pointerup", (event) => seekFromProgressPointer(event, { commit: true, end: true }), { capture: true });
   progressTarget.addEventListener("pointercancel", (event) => seekFromProgressPointer(event, { cancel: true }), { capture: true });
-  progressTarget.addEventListener("mousedown", (event) => seekFromProgressPointer(event, { start: true }), { capture: true });
-  window.addEventListener("mousemove", (event) => seekFromProgressPointer(event), { capture: true });
-  window.addEventListener("mouseup", (event) => seekFromProgressPointer(event, { commit: true, end: true }), { capture: true });
-  refs.progress.addEventListener("input", () => {
-    if (radio.progressPointerActive || radio.progressPointerHandled) return;
-    seekFromProgressControl({ commit: false });
-  });
   refs.progress.addEventListener("change", () => {
     if (radio.progressPointerHandled) {
       radio.progressPointerHandled = false;
@@ -728,6 +760,28 @@ function connectStream() {
 
 function renderNow(now, options = {}) {
   const previousTrackId = state.now?.track?.id;
+  const incomingTrackId = now?.track?.id;
+  const sameTrack = previousTrackId && incomingTrackId
+    && String(previousTrackId) === String(incomingTrackId);
+  const noExplicitOptions = !options.preserveHostAudio
+    && !options.suppressSequence
+    && !options.preservePhase;
+  const canShortCircuit = sameTrack
+    && noExplicitOptions
+    && state.now
+    && now.status === state.now.status
+    && (now.host || "") === (state.now.host || "")
+    && (now.ttsUrl || "") === (state.now.ttsUrl || "")
+    && (now.introId || "") === (state.now.introId || "");
+  if (canShortCircuit) {
+    state.now = now;
+    refs.trackCover.src = now.track?.cover || "/assets/album-sonora.png";
+    refs.duration.textContent = formatTime(now.track?.duration || 0);
+    renderQueue(now.queue || []);
+    renderProgress();
+    updatePlayButton();
+    return;
+  }
   state.now = now;
   const track = now.track;
   if (track?.id && String(track.id) !== String(previousTrackId || "")) {
@@ -748,6 +802,7 @@ function renderNow(now, options = {}) {
     : false;
   const hostCopy = englishCopy(now.host, "Sonora will shape the next segue from time, weather, taste, and recent plays.");
   refs.hostState.textContent = now.status || "idle";
+  document.body.dataset.status = now.status || "idle";
   refs.hostLine.textContent = hostCopy || "Waiting for a trigger.";
   refs.reasonText.textContent = "";
   refs.segueText.textContent = "";
@@ -805,13 +860,17 @@ function renderHost(payload) {
 
 function renderQueue(queue) {
   refs.queueCount.textContent = String(queue.length);
-  refs.queueList.innerHTML = queue.length ? queue.map((track, index) => `
-    <li>
-      <span class="queue-index">${index === 0 ? "▶" : index + 1}</span>
+  const currentTrackId = state.now?.track?.id == null ? "" : String(state.now.track.id);
+  refs.queueList.innerHTML = queue.length ? queue.map((track, index) => {
+    const isCurrent = currentTrackId && String(track.id || "") === currentTrackId;
+    return `
+    <li${isCurrent ? ` class="is-current"` : ""}>
+      <span class="queue-index">${isCurrent ? "▶" : index + 1}</span>
       <span class="item-title">${escapeHtml(track.title)}</span>
       <span class="item-sub">${escapeHtml(track.artist || "")}</span>
     </li>
-  `).join("") : `<li><span class="queue-index">--</span><span class="item-title">Queue is empty</span><span class="item-sub">Waiting for Agent</span></li>`;
+  `;
+  }).join("") : `<li><span class="queue-index">--</span><span class="item-title">Queue is empty</span><span class="item-sub">Waiting for Agent</span></li>`;
 }
 
 function renderTranscript(now = {}) {
@@ -833,12 +892,18 @@ function renderTranscript(now = {}) {
     refs.hostScript.innerHTML = `
       <div class="transcript-timeline" aria-hidden="true"><span></span></div>
       <div class="transcript-lines">
-        ${packet.cues.map((cue, index) => `
-          <article class="transcript-line${index === 0 ? " active" : ""}" data-index="${index}">
-            <span>${escapeHtml(cue.label)} • ${formatTime(cue.time)}</span>
-            <p>${escapeHtml(cue.text)}</p>
-          </article>
-        `).join("")}
+        ${packet.cues.map((cue, index) => {
+          const kind = cue.kind || "intro";
+          const labelText = kind === "lyric"
+            ? `${escapeHtml(cue.label || "♪")} ${formatTime(Math.max(0, cue.time))}`
+            : `${escapeHtml(cue.label || "HOST")}`;
+          return `
+            <article class="transcript-line transcript-line--${kind}${index === 0 ? " active" : ""}" data-index="${index}" data-kind="${kind}">
+              <span>${labelText}</span>
+              <p>${escapeHtml(cue.text)}</p>
+            </article>
+          `;
+        }).join("")}
       </div>
     `;
   }
@@ -854,30 +919,40 @@ function buildTranscriptPacket(now = {}) {
   const status = now.status || "idle";
   const track = now.track || {};
   const pausedInIntro = status === "paused" && isHostPhaseActive();
+  const intro = englishCopy(now.host || track.intro || "", "The host is preparing the next song.");
+  const introCues = splitIntroCues(intro);
+  const introDuration = introCues.at(-1)?.end || estimateSpeechDuration(intro);
+
   if (!pausedInIntro && (status === "playing" || status === "paused") && Array.isArray(track.lyricLines) && track.lyricLines.length) {
-    const cues = track.lyricLines
+    const lyricCues = track.lyricLines
       .filter((line) => line?.text && Number.isFinite(Number(line.time)))
       .map((line) => ({
         time: Number(line.time),
         text: line.text,
-        label: "Sonora"
+        label: "♪",
+        kind: "lyric"
       }));
+    const preamble = introCues.map((cue) => ({
+      time: cue.time - introDuration,
+      text: cue.text,
+      label: "HOST",
+      kind: "intro"
+    }));
+    const cues = [...preamble, ...lyricCues];
     return {
-      key: `lyrics:${track.id || "none"}:${cues.length}:${track.lyricLines[0]?.text || ""}`,
+      key: `combined:${track.id || "none"}:${cues.length}:${track.lyricLines[0]?.text || ""}:${intro.slice(0, 24)}`,
       mode: "lyrics",
-      duration: Number(track.duration || cues.at(-1)?.time || 0),
+      duration: Number(track.duration || lyricCues.at(-1)?.time || 0),
       cues
     };
   }
 
-  const intro = englishCopy(now.host || track.intro || "", "The host is preparing the next song.");
-  const introCues = splitIntroCues(intro);
-  const duration = introCues.at(-1)?.end || estimateSpeechDuration(intro);
   return {
     key: `intro:${now.introId || track.id || "none"}:${intro}`,
     mode: status === "playing" ? "recap" : "intro",
-    duration,
-    cues: introCues.length ? introCues : [{ time: 0, end: 3, text: intro, label: "Sonora" }]
+    duration: introDuration,
+    cues: (introCues.length ? introCues : [{ time: 0, end: 3, text: intro, label: "HOST" }])
+      .map((cue) => ({ ...cue, kind: "intro", label: cue.label || "HOST" }))
   };
 }
 
@@ -921,7 +996,12 @@ function updateTranscriptProgress() {
   if (mode === "intro") {
     time = introCueTime();
   }
-  const activeIndex = activeCueIndex(cues, time);
+  const firstLyricIdx = cues.findIndex((cue) => cue.kind === "lyric");
+  const lyricStart = firstLyricIdx >= 0 ? firstLyricIdx : 0;
+  let activeIndex = activeCueIndex(cues, time);
+  if (mode === "lyrics" && firstLyricIdx >= 0 && activeIndex < firstLyricIdx) {
+    activeIndex = firstLyricIdx;
+  }
   const timeline = refs.hostScript.querySelector(".transcript-timeline span");
   if (timeline && duration) {
     timeline.style.width = `${Math.min(100, Math.max(0, (time / duration) * 100))}%`;
@@ -981,7 +1061,7 @@ function updateClock() {
     renderPixelClock(clock, time);
   }
   clock.setAttribute("aria-label", `Current time ${time}`);
-  $("calendarLine").innerHTML = `<span>${weekday}</span><span>${date}</span>`;
+  $("calendarLine").textContent = `${weekday.toUpperCase().slice(0, 3)} ${date}`;
 }
 
 function renderPixelClock(node, value) {
@@ -1088,16 +1168,20 @@ function hasPlayableAudio(track) {
 function playableAudioSrc(track) {
   if (!track) return "";
   if (track.id && !String(track.id).startsWith("local-")) {
-    const version = encodeURIComponent(String(track.url || "").slice(-36));
-    return `/api/player/audio?id=${encodeURIComponent(track.id)}&v=${version}`;
+    return `/api/player/audio?id=${encodeURIComponent(track.id)}`;
   }
   return track.url || "";
 }
 
 function configureAudio(track, status, { preserveHostAudio = false } = {}) {
   const source = playableAudioSrc(track);
-  if (source && audio.src !== new URL(source, location.href).href) {
+  const desiredSrc = source ? new URL(source, location.href).href : "";
+  const currentSrc = audio.src || "";
+  if (desiredSrc && currentSrc !== desiredSrc) {
     audio.src = source;
+  } else if (!desiredSrc && currentSrc) {
+    audio.removeAttribute("src");
+    audio.load();
   }
   syncAudioProgress(track, state.now?.progress);
   clearInterval(state.tick);
@@ -1106,13 +1190,17 @@ function configureAudio(track, status, { preserveHostAudio = false } = {}) {
       ambient.stop();
       radio.isProgramPlaying = true;
       updatePlayButton();
+      const myToken = ++radio.trackPlaybackToken;
       audio.play()
         .then(() => {
+          if (myToken !== radio.trackPlaybackToken) return;
           radio.audioRecoveryKey = "";
           radio.isProgramPlaying = true;
           updatePlayButton();
         })
-        .catch(() => {
+        .catch((error) => {
+          if (myToken !== radio.trackPlaybackToken) return;
+          if (isInterruptedPlayError(error)) return;
           radio.isProgramPlaying = false;
           updatePlayButton();
           handleAudioFailure(track, "audio unavailable");
@@ -1141,11 +1229,19 @@ function configureAudio(track, status, { preserveHostAudio = false } = {}) {
     ambient.stop();
   } else {
     audio.pause();
-    if (radio.programPhase !== "intro") hostAudio.pause();
+    cancelHostIntroPlayback();
     radio.isProgramPlaying = false;
     updatePlayButton();
     ambient.stop();
   }
+}
+
+function isInterruptedPlayError(error) {
+  if (!error) return false;
+  const name = String(error.name || "");
+  const message = String(error.message || "");
+  if (name === "AbortError") return true;
+  return /interrupted|aborted/i.test(message);
 }
 
 async function handleAudioFailure(track, reason) {
@@ -1200,7 +1296,7 @@ async function sequenceRadio(now) {
   logEvent("host intro");
   scheduleTrackStart(0);
   await speakText(now.host, now.ttsUrl, { key });
-  if (state.now?.track?.id !== now.track.id || state.now.status !== "speaking") return;
+  if (state.now?.track?.id !== now.track.id || state.now.status !== "speaking" || !radio.isProgramPlaying) return;
   if (!isMediaPlaying(audio) && currentProgramProgress() < musicStartOffset()) {
     scheduleTrackStart(currentProgramProgress());
     return;
@@ -1216,12 +1312,13 @@ async function sequenceRadio(now) {
 async function toggleProgramPlayback() {
   if (!state.now?.track) return;
 
-  if (state.now?.status !== "paused" && isProgramActuallyPlaying()) {
+  if (state.now?.status !== "paused" && isProgramRunning()) {
     const progress = currentProgramProgress();
     radio.isProgramPlaying = false;
     clearMusicStartTimer();
     radio.transcriptTime = Math.min(progress, introDuration());
-    hostAudio.pause();
+    state.now.status = "paused";
+    cancelHostIntroPlayback();
     audio.pause();
     if ("speechSynthesis" in window) window.speechSynthesis.pause();
     renderNow(await postJson("/api/player/pause", { progress: trackProgressForProgramProgress(progress) }), {
@@ -1341,12 +1438,14 @@ function scheduleTrackStart(programProgress = 0) {
     return;
   }
   radio.musicStartTimer = setTimeout(() => {
+    if (!radio.isProgramPlaying || state.now?.status === "paused") return;
     startTrackPlaybackAtProgramProgress(musicStartOffset(), { notify: false });
   }, delay * 1000);
 }
 
 function startTrackPlaybackAtProgramProgress(programProgress = musicStartOffset(), { notify = false } = {}) {
   if (!state.now?.track || !hasPlayableAudio(state.now.track)) return;
+  if (!radio.isProgramPlaying && state.now.status === "paused") return;
   const trackProgress = trackProgressForProgramProgress(programProgress);
   state.now.progress = trackProgress;
   syncAudioProgress(state.now.track, trackProgress, { force: true });
@@ -1355,13 +1454,17 @@ function startTrackPlaybackAtProgramProgress(programProgress = musicStartOffset(
   } else {
     radio.programPhase = "track";
   }
+  const myToken = ++radio.trackPlaybackToken;
   audio.play()
     .then(() => {
+      if (myToken !== radio.trackPlaybackToken) return;
       radio.audioRecoveryKey = "";
       radio.isProgramPlaying = true;
       updatePlayButton();
     })
-    .catch(() => {
+    .catch((error) => {
+      if (myToken !== radio.trackPlaybackToken) return;
+      if (isInterruptedPlayError(error)) return;
       radio.isProgramPlaying = false;
       updatePlayButton();
       handleAudioFailure(state.now.track, "audio unavailable");
@@ -1508,10 +1611,10 @@ function waitForHostText(text) {
 
 function playHostAudio(ttsUrl) {
   return new Promise((resolve) => {
+    resumeHostVoiceOutput();
+    const token = ++radio.introPlaybackToken;
     const startAt = Number(radio.pendingIntroSeek ?? 0);
-    const sourceUrl = new URL(ttsUrl, location.href);
-    sourceUrl.searchParams.set("_sonora_seek", `${Date.now()}-${Math.round(startAt * 100)}`);
-    const source = sourceUrl.href;
+    const source = ttsUrl;
     let fallbackTimer = null;
     let playbackStarted = false;
     let settled = false;
@@ -1521,10 +1624,15 @@ function playHostAudio(ttsUrl) {
       clearTimeout(fallbackTimer);
       hostAudio.removeEventListener("ended", onEnded);
       hostAudio.removeEventListener("error", onError);
+      hostAudio.removeEventListener("pause", onPause);
       resolve({ ok, error });
     };
+    const cancelled = () => token !== radio.introPlaybackToken;
     const onEnded = () => done(true);
     const onError = () => done(false, `TTS audio error: ${hostAudio.error?.message || ttsUrl}`);
+    const onPause = () => {
+      if (cancelled()) done(true);
+    };
     hostAudio.pause();
     hostAudio.removeAttribute("src");
     hostAudio.load();
@@ -1545,6 +1653,10 @@ function playHostAudio(ttsUrl) {
     };
     const playAfterSeek = () => {
       if (playbackStarted) return;
+      if (cancelled()) {
+        done(true);
+        return;
+      }
       playbackStarted = true;
       clearTimeout(fallbackTimer);
       applyStartTime();
@@ -1552,6 +1664,11 @@ function playHostAudio(ttsUrl) {
       hostAudio.addEventListener("ended", onEnded, { once: true });
       hostAudio.play()
         .then(() => {
+          if (cancelled()) {
+            hostAudio.pause();
+            done(true);
+            return;
+          }
           applyStartTime();
           radio.isProgramPlaying = true;
           updatePlayButton();
@@ -1564,6 +1681,7 @@ function playHostAudio(ttsUrl) {
     };
     radio.pendingIntroSeek = null;
     hostAudio.addEventListener("error", onError, { once: true });
+    hostAudio.addEventListener("pause", onPause);
     if (hostAudio.readyState >= 1) {
       playAfterSeek();
     } else {
@@ -1576,6 +1694,7 @@ function playHostAudio(ttsUrl) {
 }
 
 function primeHostAudio() {
+  if (isProgramActuallyPlaying()) return;
   hostAudio.muted = true;
   hostAudio.src = silentAudioSrc;
   hostAudio.play()
@@ -1587,6 +1706,12 @@ function primeHostAudio() {
     .catch(() => {
       hostAudio.muted = false;
     });
+}
+
+function cancelHostIntroPlayback() {
+  radio.introPlaybackToken += 1;
+  radio.pendingIntroSeek = null;
+  hostAudio.pause();
 }
 
 function getSpeechProfile(text) {
@@ -1876,17 +2001,9 @@ async function commitProgramSeek(progress, shouldPlay) {
   updateTranscriptProgress();
   updatePlayButton();
 
-  if (!shouldPlay) {
-    const next = await postJson("/api/player/seek", { progress: trackProgress, status: "paused", silent: true });
-    if (String(next.track?.id || "") === String(state.now?.track?.id || "")) {
-      state.now = { ...next, status: "paused", progress: trackProgress };
-      refs.progress.value = String(progress);
-      renderProgress();
-      updateTranscriptProgress();
-    }
-  } else {
-    postJson("/api/player/seek", { progress: trackProgress, status, silent: true }).catch(() => logEvent("seek sync failed"));
-  }
+  if (state.now) state.now.status = status;
+  postJson("/api/player/seek", { progress: trackProgress, status, silent: true })
+    .catch(() => logEvent("seek sync failed"));
 }
 
 function updateTranscriptPreview(progress) {

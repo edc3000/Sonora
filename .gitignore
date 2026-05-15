@@ -7,6 +7,7 @@ cache/
 *.m4a
 *.flac
 state.db
+state.db.bak-*
 .DS_Store
 .playwright-cli/
 user/ncm-session.json
