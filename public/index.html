@@ -101,9 +101,17 @@
           <ul id="queueList" class="queue-list"></ul>
         </section>
 
+        <section class="chat-console" aria-live="polite">
+          <header class="chat-console-bar">
+            <span>CHAT</span>
+            <button id="chatClear" class="chat-clear" type="button">CLEAR</button>
+          </header>
+          <ol id="chatLog" class="chat-log" role="log" aria-label="Sonora chat transcript"></ol>
+        </section>
+
         <form id="chatForm" class="chat-dock">
           <span class="prompt-chevron" aria-hidden="true">&gt;</span>
-          <input id="chatInput" name="message" type="text" autocomplete="off" placeholder="ask sonora — e.g. play late-night cantopop">
+          <input id="chatInput" name="message" type="text" autocomplete="off" placeholder="ask sonora — e.g. add 周杰伦 晴天">
           <button type="submit" aria-label="Send">SEND</button>
         </form>
 

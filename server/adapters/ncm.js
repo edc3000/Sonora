@@ -105,13 +105,14 @@ export class NeteaseCloudMusicApi {
     return this.fetchJson("/playlist/track/all", { id, limit, offset }, { cookie });
   }
 
-  async search(keyword) {
+  async search(keyword, { limit = 30 } = {}) {
+    const cap = Math.max(1, Math.min(30, Number(limit) || 30));
     if (!this.baseUrl) {
       const needle = String(keyword || "").toLowerCase();
-      return fallbackSongs.filter((song) => `${song.title} ${song.artist}`.toLowerCase().includes(needle)).slice(0, 8);
+      return fallbackSongs.filter((song) => `${song.title} ${song.artist}`.toLowerCase().includes(needle)).slice(0, cap);
     }
-    const data = await this.fetchJson("/search", { keywords: keyword });
-    return (data.result?.songs || []).map((song) => ({
+    const data = await this.fetchJson("/search", { keywords: keyword, limit: cap });
+    return (data.result?.songs || []).slice(0, cap).map((song) => ({
       id: String(song.id),
       title: song.name,
       artist: song.artists?.map((artist) => artist.name).join(" / ") || "Unknown",

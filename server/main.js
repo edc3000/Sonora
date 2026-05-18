@@ -7,12 +7,13 @@ import { config, readRuntimeSettings, saveRuntimeSettings } from "./config.js";
 import { StateStore } from "./state.js";
 import { NeteaseCloudMusicApi } from "./adapters/ncm.js";
 import { AgentBrain } from "./agent.js";
+import { ChatAgent } from "./chat-agent.js";
 import { ContextBuilder } from "./context.js";
 import { RadioScheduler } from "./scheduler.js";
 import { TtsPipeline } from "./tts.js";
 import { WebSocketHub } from "./ws.js";
 import { createHandler } from "./http.js";
-import { selectIntroForTrack } from "./intro.js";
+import { INTRO_PERSONA_VERSION, selectIntroForTrack } from "./intro.js";
 import {
   activateNcmUser,
   deactivateNcmUser,
@@ -42,8 +43,9 @@ const agent = new AgentBrain({ openai: config.openai, ncm });
 const tts = new TtsPipeline({ cacheDir: config.ttsCacheDir, tts: config.tts });
 const hub = new WebSocketHub();
 const MIN_QUEUE_SIZE = 4;
-const TARGET_QUEUE_SIZE = 5;
-const TARGET_SET_SIZE = TARGET_QUEUE_SIZE + 1;
+const TARGET_SET_SIZE = 6;
+const REFILL_TARGET_SIZE = 8;
+const MAX_QUEUE_SIZE = 12;
 let refillPromise = null;
 let warmQueuePromise = null;
 let prepareCurrentPromise = null;
@@ -214,7 +216,7 @@ async function buildPreparedQueue({ input = "", trigger = "auto", route = null, 
   const searchResults = input ? await ncm.search(input).catch(() => []) : [];
   const packet = await context.build({ input, trigger, toolResults: { route, searchResults } });
   const decision = await agent.compute(packet);
-  const selected = fillQueueFromTasteSeeds(decision.play || [], packet.fragments);
+  const selected = fillQueueFromTasteSeeds(decision.play || [], packet.fragments, decision.candidates || []);
   const queue = [];
   for (const track of selected) {
     queue.push(await withTimeout(ncm.hydrateTrack(track), 10000, track));
@@ -229,8 +231,8 @@ async function ensureRadio({ trigger = "open" } = {}) {
   const now = state.snapshot.now;
   const hasTrack = Boolean(now.track);
   const queueSize = now.queue?.length || 0;
-  if (queueSize > TARGET_QUEUE_SIZE) {
-    await trimQueueToTarget();
+  if (queueSize > MAX_QUEUE_SIZE) {
+    await trimQueueToMax();
   }
   if (!hasTrack) {
     return runShow({
@@ -247,9 +249,9 @@ async function ensureRadio({ trigger = "open" } = {}) {
   return state.snapshot.now;
 }
 
-async function trimQueueToTarget() {
+async function trimQueueToMax() {
   await state.update((current) => {
-    current.now.queue = (current.now.queue || []).slice(0, TARGET_QUEUE_SIZE);
+    current.now.queue = (current.now.queue || []).slice(0, MAX_QUEUE_SIZE);
     return current;
   });
   hub.broadcast("queue-updated", { queue: state.snapshot.now.queue });
@@ -271,7 +273,7 @@ async function refillQueueNow({ trigger = "auto-refill" } = {}) {
     ...(before.queue || []),
     ...(before.history || [])
   ].filter(Boolean).map(trackKey));
-  const needed = Math.max(0, TARGET_QUEUE_SIZE - (before.queue?.length || 0));
+  const needed = Math.max(0, REFILL_TARGET_SIZE - (before.queue?.length || 0));
   if (!needed) return before;
 
   const { decision, preparedQueue } = await buildPreparedQueue({
@@ -296,7 +298,7 @@ async function refillQueueNow({ trigger = "auto-refill" } = {}) {
       ...(current.now.queue || []),
       ...(current.now.history || [])
     ].filter(Boolean).map(trackKey));
-    const liveNeeded = Math.max(0, TARGET_QUEUE_SIZE - (current.now.queue?.length || 0));
+    const liveNeeded = Math.max(0, REFILL_TARGET_SIZE - (current.now.queue?.length || 0));
     const additions = candidates
       .filter((track) => {
         const key = trackKey(track);
@@ -309,7 +311,7 @@ async function refillQueueNow({ trigger = "auto-refill" } = {}) {
     appendedCount = additions.length;
     if (!appendedCount) return current;
 
-    current.now.queue = [...(current.now.queue || []), ...additions].slice(0, TARGET_QUEUE_SIZE);
+    current.now.queue = [...(current.now.queue || []), ...additions].slice(0, MAX_QUEUE_SIZE);
     current.now.reason = current.now.reason || decision.reason;
     current.now.segue = decision.segue || current.now.segue;
     current.messages.unshift({
@@ -328,12 +330,95 @@ async function refillQueueNow({ trigger = "auto-refill" } = {}) {
   return state.snapshot.now;
 }
 
+async function enqueueTracksNext(tracks = []) {
+  const incoming = Array.isArray(tracks) ? tracks.filter(Boolean) : [];
+  if (!incoming.length) return { now: state.snapshot.now, added: 0, skipped: 0, tracks: [] };
+
+  const existing = new Set([
+    state.snapshot.now.track,
+    ...(state.snapshot.now.queue || []),
+    ...(state.snapshot.now.history || [])
+  ].filter(Boolean).map(trackKey));
+
+  const unique = [];
+  let skipped = 0;
+  for (const track of incoming) {
+    const key = trackKey(track);
+    if (!key || existing.has(key)) {
+      skipped += 1;
+      continue;
+    }
+    existing.add(key);
+    unique.push(track);
+  }
+  if (!unique.length) return { now: state.snapshot.now, added: 0, skipped, tracks: [] };
+
+  const hydrated = [];
+  for (const track of unique) {
+    hydrated.push(await withTimeout(ncm.hydrateTrack(track), 10000, track));
+  }
+
+  const reason = state.snapshot.now.reason || "";
+  const prepared = hydrated.map((track, i) => {
+    const intro = selectIntroForTrack(track, { index: i + 1, reason });
+    return {
+      ...track,
+      intro,
+      introTtsUrl: "",
+      introTtsProvider: "",
+      introTtsError: "",
+      introTtsStyle: ""
+    };
+  });
+
+  let added = 0;
+  await state.update((current) => {
+    const liveExisting = new Set([
+      current.now.track,
+      ...(current.now.queue || []),
+      ...(current.now.history || [])
+    ].filter(Boolean).map(trackKey));
+    const additions = prepared.filter((track) => {
+      const key = trackKey(track);
+      if (!key || liveExisting.has(key)) return false;
+      liveExisting.add(key);
+      return true;
+    });
+    added = additions.length;
+    if (!added) return current;
+    current.now.queue = [...additions, ...(current.now.queue || [])].slice(0, MAX_QUEUE_SIZE);
+    return current;
+  });
+
+  if (added) {
+    hub.broadcast("queue-updated", { queue: state.snapshot.now.queue });
+    hub.broadcast("now-playing", state.snapshot.now);
+    warmQueueTts({ limit: Math.min(added + 1, 4) });
+  }
+
+  return {
+    now: state.snapshot.now,
+    added,
+    skipped: skipped + (prepared.length - added),
+    tracks: prepared.slice(0, added)
+  };
+}
+
+async function searchAndEnqueueNext(keyword, { limit = 3 } = {}) {
+  const query = String(keyword || "").trim();
+  if (!query) return { now: state.snapshot.now, added: 0, skipped: 0, results: [], tracks: [] };
+  const results = await ncm.search(query, { limit }).catch(() => []);
+  if (!results.length) return { now: state.snapshot.now, added: 0, skipped: 0, results: [], tracks: [] };
+  const outcome = await enqueueTracksNext(results);
+  return { ...outcome, results };
+}
+
 function trackKey(track = {}) {
   if (!track) return "";
   return String(track.id || `${track.title || ""}::${track.artist || ""}`).toLowerCase();
 }
 
-function fillQueueFromTasteSeeds(tracks = [], fragments = {}) {
+function fillQueueFromTasteSeeds(tracks = [], fragments = {}, fallbackPool = []) {
   const selected = [];
   const used = new Set([
     state.snapshot.now.track,
@@ -351,6 +436,11 @@ function fillQueueFromTasteSeeds(tracks = [], fragments = {}) {
   for (const track of tracks) {
     if (selected.length >= TARGET_SET_SIZE) break;
     add(track);
+  }
+
+  for (const candidate of fallbackPool) {
+    if (selected.length >= TARGET_SET_SIZE) break;
+    add(candidate);
   }
 
   for (const seed of fragments.musicTaste?.songSeeds || []) {
@@ -465,6 +555,24 @@ async function previousTrack() {
   return state.snapshot.now;
 }
 
+async function pausePlayback() {
+  await state.update((current) => {
+    current.now.status = "paused";
+    return current;
+  });
+  hub.broadcast("now-playing", state.snapshot.now);
+  return state.snapshot.now;
+}
+
+async function resumePlayback() {
+  await state.update((current) => {
+    current.now.status = current.now.track ? "playing" : "idle";
+    return current;
+  });
+  hub.broadcast("now-playing", state.snapshot.now);
+  return state.snapshot.now;
+}
+
 async function refreshCurrentTrackAudio() {
   const currentTrack = state.snapshot.now.track;
   if (!currentTrack) return state.snapshot.now;
@@ -575,12 +683,16 @@ function hasFreshIntroTts(track = {}) {
 function applySelectedIntro(track, options = {}) {
   if (!track) return "";
   const intro = selectIntroForTrack(track, options);
-  if (intro && intro !== track.intro) {
+  const staleVersion = track.introPersonaVersion !== INTRO_PERSONA_VERSION;
+  if (intro && (intro !== track.intro || staleVersion)) {
     track.intro = intro;
+    track.introPersonaVersion = INTRO_PERSONA_VERSION;
     track.introTtsUrl = "";
     track.introTtsProvider = "";
     track.introTtsError = "";
     track.introTtsStyle = "";
+  } else if (intro && !track.introPersonaVersion) {
+    track.introPersonaVersion = INTRO_PERSONA_VERSION;
   }
   return track.intro || intro || "";
 }
@@ -642,12 +754,16 @@ async function refreshCurrentIntroTts(track) {
 
 async function prepareRadioTracks(tracks, decision, { ttsMode = "first" } = {}) {
   return Promise.all(tracks.map(async (track, index) => {
-    const intro = selectIntroForTrack(track, { index, reason: decision.reason });
+    const taggedTrack = track?.intro && !track.introPersonaVersion
+      ? { ...track, introPersonaVersion: INTRO_PERSONA_VERSION }
+      : track;
+    const intro = selectIntroForTrack(taggedTrack, { index, reason: decision.reason });
     const shouldSynthesize = intro && (ttsMode === "all" || (ttsMode === "first" && index === 0));
-    const speech = shouldSynthesize ? await tts.synthesize(intro, tts.optionsForTrack(track)) : { url: "" };
+    const speech = shouldSynthesize ? await tts.synthesize(intro, tts.optionsForTrack(taggedTrack)) : { url: "" };
     return {
-      ...track,
+      ...taggedTrack,
       intro,
+      introPersonaVersion: INTRO_PERSONA_VERSION,
       introTtsUrl: speech.url,
       introTtsProvider: speech.provider,
       introTtsError: speech.error || "",
@@ -775,6 +891,25 @@ const scheduler = new RadioScheduler({
 });
 scheduler.start();
 
+const chatAgent = new ChatAgent({
+  openai: config.openai,
+  deps: {
+    state,
+    runShow,
+    nextTrack,
+    previousTrack,
+    pausePlayback,
+    resumePlayback,
+    searchAndEnqueueNext
+  }
+});
+
+async function handleChat({ message = "", trigger = "user" } = {}) {
+  const active = await getActiveNcmUser(config.userDir).catch(() => null);
+  const userId = active?.userId ? String(active.userId) : "default";
+  return chatAgent.handle({ message, userId, trigger });
+}
+
 const deps = {
   state,
   publicDir: config.publicDir,
@@ -783,6 +918,7 @@ const deps = {
   saveSettings: (input) => {
     const settings = saveRuntimeSettings(input);
     ncm.baseUrl = config.ncm.baseUrl.replace(/\/$/, "");
+    chatAgent.openai = config.openai;
     return settings;
   },
   readTaste,
@@ -796,6 +932,10 @@ const deps = {
   runShow,
   nextTrack,
   previousTrack,
+  pausePlayback,
+  resumePlayback,
+  searchAndEnqueueNext,
+  handleChat,
   refreshCurrentTrackAudio,
   streamTrackAudio,
   broadcast: (type, payload) => hub.broadcast(type, payload)

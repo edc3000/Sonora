@@ -42,7 +42,7 @@ export class ContextBuilder {
       },
       memory: {
         recentMessages: state.messages.slice(0, 8),
-        recentPlays: state.plays.slice(0, 12),
+        recentPlays: state.plays.slice(0, 40),
         prefs: state.prefs,
         currentPlan: state.plan
       },

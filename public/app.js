@@ -14,7 +14,10 @@ const $ = (id) => document.getElementById(id);
 const audio = $("audio");
 const hostAudio = $("hostAudio") || new Audio();
 const silentAudioSrc = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=";
-const INTRO_MUSIC_START_SECONDS = 5;
+const INTRO_MUSIC_START_SECONDS = 8;
+const INTRO_OVERLAP_MUSIC_VOLUME = 0.4;
+const NORMAL_MUSIC_VOLUME = 0.75;
+const VOLUME_RAMP_MS = 2500;
 let lastSpokenIntroKey = "";
 let lastAudioWarning = "";
 const radio = {
@@ -163,7 +166,8 @@ const refs = {
   ncmLoginStatus: $("ncmLoginStatus"),
   ncmAvatar: $("ncmAvatar"),
   ncmName: $("ncmName"),
-  ncmSyncLine: $("ncmSyncLine")
+  ncmSyncLine: $("ncmSyncLine"),
+  chatLog: $("chatLog")
 };
 const hostIdentity = document.querySelector(".host-identity");
 
@@ -366,15 +370,34 @@ function bindControls() {
     const input = $("chatInput");
     const message = input.value.trim();
     input.value = "";
+    if (!message) return;
     ambient.ensureContext();
     primeHostAudio();
+    appendChatLine({ role: "user", body: message });
+    const pending = appendChatLine({ role: "assistant", body: "thinking…", pending: true });
     setBusy(true);
     try {
-      const next = await postJson("/api/chat", { message });
-      renderNow(next);
+      const response = await postJson("/api/chat", { message });
+      const reply = response?.reply || fallbackReplyFromActions(response?.actions);
+      replaceChatLine(pending, {
+        role: "assistant",
+        body: reply || "(no reply)",
+        meta: formatActionMeta(response?.actions)
+      });
+      lastLocalAssistantReply = { content: reply || "(no reply)", at: Date.now() };
+      if (response?.now) renderNow(response.now);
+    } catch (error) {
+      replaceChatLine(pending, {
+        role: "system",
+        body: `Chat failed: ${error?.message || "unknown error"}`
+      });
     } finally {
       setBusy(false);
     }
+  });
+
+  $("chatClear")?.addEventListener("click", () => {
+    refs.chatLog.innerHTML = "";
   });
 
   refs.playBtn.addEventListener("click", async () => {
@@ -442,6 +465,10 @@ function bindControls() {
       renderProgress();
       updateTranscriptProgress();
     }
+  });
+  hostAudio.addEventListener("ended", () => {
+    radio.programPhase = "track";
+    restoreMusicVolume();
   });
   audio.addEventListener("loadedmetadata", () => {
     renderProgress();
@@ -750,6 +777,7 @@ function connectStream() {
       renderQueue(state.now.queue);
     }
     if (message.type === "plan-updated") renderPlan(message.payload.plan || []);
+    if (message.type === "chat-message") handleRemoteChatMessage(message.payload);
   });
   socket.addEventListener("close", () => {
     refs.socketBadge.textContent = "offline";
@@ -858,10 +886,13 @@ function renderHost(payload) {
   renderTranscript({ status: "speaking", host: say, track: state.now?.track || null, introId: `host:${say}` });
 }
 
+const QUEUE_VISIBLE_LIMIT = 5;
+
 function renderQueue(queue) {
-  refs.queueCount.textContent = String(queue.length);
+  const visible = queue.slice(0, QUEUE_VISIBLE_LIMIT);
+  refs.queueCount.textContent = String(visible.length);
   const currentTrackId = state.now?.track?.id == null ? "" : String(state.now.track.id);
-  refs.queueList.innerHTML = queue.length ? queue.map((track, index) => {
+  refs.queueList.innerHTML = visible.length ? visible.map((track, index) => {
     const isCurrent = currentTrackId && String(track.id || "") === currentTrackId;
     return `
     <li${isCurrent ? ` class="is-current"` : ""}>
@@ -1090,14 +1121,7 @@ function renderPixelWord(node, value) {
 
 function englishCopy(value, fallback) {
   const text = String(value || "").trim();
-  if (!text) return fallback;
-  return isMostlyCjk(text) ? fallback : text;
-}
-
-function isMostlyCjk(text) {
-  const cjk = (text.match(/[\u3400-\u9fff]/g) || []).length;
-  const latin = (text.match(/[A-Za-z]/g) || []).length;
-  return cjk > 0 && latin < Math.max(12, cjk * 1.2);
+  return text || fallback;
 }
 
 function isMediaPlaying(element) {
@@ -1132,6 +1156,47 @@ function programTimeFromControl() {
 
 function musicStartOffset() {
   return INTRO_MUSIC_START_SECONDS;
+}
+
+let volumeRampTimer = null;
+
+function rampMusicVolume(target, duration = VOLUME_RAMP_MS) {
+  if (volumeRampTimer) {
+    cancelAnimationFrame(volumeRampTimer);
+    volumeRampTimer = null;
+  }
+  const clamped = Math.max(0, Math.min(1, target));
+  if (duration <= 0) {
+    audio.volume = clamped;
+    return;
+  }
+  const start = audio.volume;
+  if (Math.abs(start - clamped) < 0.005) {
+    audio.volume = clamped;
+    return;
+  }
+  const t0 = performance.now();
+  const step = () => {
+    const elapsed = performance.now() - t0;
+    const progress = Math.min(1, elapsed / duration);
+    // ease-out cubic: 前快后慢，末尾几乎无感
+    const eased = 1 - Math.pow(1 - progress, 3);
+    audio.volume = start + (clamped - start) * eased;
+    if (progress < 1) {
+      volumeRampTimer = requestAnimationFrame(step);
+    } else {
+      volumeRampTimer = null;
+    }
+  };
+  volumeRampTimer = requestAnimationFrame(step);
+}
+
+function duckMusicForIntro() {
+  rampMusicVolume(INTRO_OVERLAP_MUSIC_VOLUME);
+}
+
+function restoreMusicVolume() {
+  rampMusicVolume(NORMAL_MUSIC_VOLUME);
 }
 
 function trackProgressForProgramProgress(progress) {
@@ -1451,8 +1516,10 @@ function startTrackPlaybackAtProgramProgress(programProgress = musicStartOffset(
   syncAudioProgress(state.now.track, trackProgress, { force: true });
   if (introActiveAtProgramProgress(programProgress)) {
     radio.programPhase = "overlap";
+    duckMusicForIntro();
   } else {
     radio.programPhase = "track";
+    restoreMusicVolume();
   }
   const myToken = ++radio.trackPlaybackToken;
   audio.play()
@@ -2019,6 +2086,95 @@ function logEvent(text) {
   li.textContent = `${new Date().toLocaleTimeString("zh-CN", { hour12: false })} ${text}`;
   refs.eventLog.prepend(li);
   while (refs.eventLog.children.length > 7) refs.eventLog.lastElementChild.remove();
+}
+
+const CHAT_MARKERS = { user: ">", assistant: "◀", system: "//" };
+const MAX_CHAT_LINES = 60;
+
+function appendChatLine({ role = "assistant", body = "", pending = false, meta = "" } = {}) {
+  if (!refs.chatLog) return null;
+  const li = document.createElement("li");
+  li.className = `chat-line ${role}${pending ? " pending" : ""}`;
+  const marker = document.createElement("span");
+  marker.className = "marker";
+  marker.textContent = CHAT_MARKERS[role] || "◀";
+  const main = document.createElement("div");
+  const bodyEl = document.createElement("div");
+  bodyEl.className = "body";
+  bodyEl.textContent = body;
+  main.appendChild(bodyEl);
+  if (meta) {
+    const metaEl = document.createElement("div");
+    metaEl.className = "meta";
+    metaEl.textContent = meta;
+    main.appendChild(metaEl);
+  }
+  li.appendChild(marker);
+  li.appendChild(main);
+  refs.chatLog.appendChild(li);
+  while (refs.chatLog.children.length > MAX_CHAT_LINES) refs.chatLog.firstElementChild.remove();
+  refs.chatLog.scrollTop = refs.chatLog.scrollHeight;
+  return li;
+}
+
+function replaceChatLine(li, payload) {
+  if (!li) return appendChatLine(payload);
+  li.className = `chat-line ${payload.role || "assistant"}`;
+  li.innerHTML = "";
+  const marker = document.createElement("span");
+  marker.className = "marker";
+  marker.textContent = CHAT_MARKERS[payload.role] || "◀";
+  const main = document.createElement("div");
+  const bodyEl = document.createElement("div");
+  bodyEl.className = "body";
+  bodyEl.textContent = payload.body || "";
+  main.appendChild(bodyEl);
+  if (payload.meta) {
+    const metaEl = document.createElement("div");
+    metaEl.className = "meta";
+    metaEl.textContent = payload.meta;
+    main.appendChild(metaEl);
+  }
+  li.appendChild(marker);
+  li.appendChild(main);
+  refs.chatLog.scrollTop = refs.chatLog.scrollHeight;
+  return li;
+}
+
+function formatActionMeta(actions) {
+  if (!Array.isArray(actions) || !actions.length) return "";
+  return actions.map((action) => `${action.name}${action.ok === false ? "·err" : ""}`).join(" · ");
+}
+
+let lastLocalAssistantReply = { content: "", at: 0 };
+
+function handleRemoteChatMessage(payload = {}) {
+  if (!payload?.content) return;
+  if (payload.role !== "assistant") return;
+  const now = Date.now();
+  if (
+    payload.content === lastLocalAssistantReply.content
+    && now - lastLocalAssistantReply.at < 2500
+  ) {
+    return;
+  }
+  appendChatLine({
+    role: "assistant",
+    body: payload.content,
+    meta: formatActionMeta((payload.actions || []).map((name) => ({ name, ok: true })))
+  });
+}
+
+function fallbackReplyFromActions(actions) {
+  if (!Array.isArray(actions) || !actions.length) return "";
+  const last = actions[actions.length - 1];
+  if (last.name === "search_and_append") return last.ok === false ? "No new matches enqueued." : "Appended to the queue.";
+  if (last.name === "replace_show") return "Rebuilt the show.";
+  if (last.name === "next_track") return "Next track.";
+  if (last.name === "prev_track") return "Previous track.";
+  if (last.name === "pause") return "Paused.";
+  if (last.name === "resume") return "Resuming.";
+  return "";
 }
 
 function setBusy(isBusy) {

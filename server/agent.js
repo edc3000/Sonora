@@ -18,7 +18,8 @@ export class AgentBrain {
     const parsed = raw ? parseAgentJson(raw) : null;
     if (raw && !parsed) console.error("[agent] LLM raw did not parse as JSON. First 300 chars:", String(raw).slice(0, 300));
     const result = parsed || await this.fallback(enrichedPacket.fragments);
-    return completeQueue(normalizeResult(result), candidatePool);
+    const decision = completeQueue(normalizeResult(result), candidatePool);
+    return { ...decision, candidates: candidatePool };
   }
 
   async callProvider({ messages }) {
@@ -100,15 +101,17 @@ export class AgentBrain {
   async buildCandidatePool(fragments) {
     const candidates = [];
     const input = String(fragments.currentInput || "").trim();
-    const recent = new Set((fragments.memory?.recentPlays || []).slice(0, 12).map((play) => keyFor(play.title, play.artist)));
-    const topArtistNames = new Set((fragments.musicTaste?.topArtists || []).slice(0, 20).map((item) => item.artist));
+    const recent = new Set((fragments.memory?.recentPlays || []).slice(0, 30).map((play) => keyFor(play.title, play.artist)));
+    const topArtists = fragments.musicTaste?.topArtists || [];
+    const coreArtistNames = new Set(topArtists.slice(0, 5).map((item) => item.artist));
+    const wellKnownArtistNames = new Set(topArtists.slice(0, 20).map((item) => item.artist));
 
     const add = (song, score, reason) => {
       if (!song?.title || !song?.artist) return;
       const key = String(song.id || keyFor(song.title, song.artist));
       const duplicate = candidates.find((item) => String(item.id || keyFor(item.title, item.artist)) === key);
       const adjustedScore = score
-        + artistAffinity(song.artist, topArtistNames)
+        + affinityAdjustment(song.artist, coreArtistNames, wellKnownArtistNames)
         - (recent.has(keyFor(song.title, song.artist)) ? 35 : 0);
       if (duplicate) {
         duplicate.score = Math.max(duplicate.score || 0, adjustedScore);
@@ -179,11 +182,41 @@ export class AgentBrain {
       }, 45, "familiar liked-song seed");
     }
 
-    return candidates
+    const sorted = candidates
       .filter((song) => !String(song.id || "").startsWith("local-") || !this.ncm.configured)
-      .sort((a, b) => (b.score || 0) - (a.score || 0))
-      .slice(0, 60);
+      .sort((a, b) => (b.score || 0) - (a.score || 0));
+    return sampleAcrossTiers(sorted, { total: 60, tier1: 30, tier2: 15, tier3: 15 });
   }
+}
+
+export function sampleAcrossTiers(sorted, { total = 60, tier1 = 30, tier2 = 15, tier3 = 15 } = {}) {
+  const t1 = []; const t2 = []; const t3 = [];
+  for (const c of sorted) {
+    const s = c.score || 0;
+    if (s >= 70) t1.push(c);
+    else if (s > 50) t2.push(c);
+    else t3.push(c);
+  }
+  const picked = new Map();
+  const take = (list, cap) => {
+    let taken = 0;
+    for (const c of list) {
+      if (taken >= cap) break;
+      const key = String(c.id || keyFor(c.title, c.artist));
+      if (picked.has(key)) continue;
+      picked.set(key, c);
+      taken += 1;
+    }
+  };
+  take(t1, tier1);
+  take(t2, tier2);
+  take(t3, tier3);
+  for (const c of sorted) {
+    if (picked.size >= total) break;
+    const key = String(c.id || keyFor(c.title, c.artist));
+    if (!picked.has(key)) picked.set(key, c);
+  }
+  return [...picked.values()].sort((a, b) => (b.score || 0) - (a.score || 0));
 }
 
 function chatCompletionsUrl(openai) {
@@ -216,6 +249,7 @@ function enrichContextPacket(contextPacket, candidatePool) {
     ...contextPacket.fragments,
     selectionPolicy: {
       rule: "Build the play queue from toolResults.candidatePool whenever possible. Preserve candidate id/source/cover/duration fields. Pick tracks that fit userTaste, currentInput, time, and recentPlays; avoid repeats.",
+      diversityRule: "The candidatePool is pre-sampled across familiarity tiers. Of the 6 chosen tracks, include AT LEAST 2 from candidates whose artist is NOT in fragments.musicTaste.topArtists' first 20 (lower-score, novelty-bonus candidates often surface here). This keeps the show from looping the same comfort-zone artists.",
       queueSize: "6 tracks",
       introRule: [
         "Every selected track must include an intro written in natural English from the start.",
@@ -314,12 +348,15 @@ function prioritizeArtistSeeds(artistSeeds, input) {
   });
 }
 
-function artistAffinity(artistText, topArtistNames) {
+export function affinityAdjustment(artistText, coreArtistNames, wellKnownArtistNames) {
   const artist = String(artistText || "").toLowerCase();
-  for (const name of topArtistNames) {
-    if (artist.includes(String(name).toLowerCase())) return 10;
+  for (const name of coreArtistNames) {
+    if (artist.includes(String(name).toLowerCase())) return 5;
   }
-  return 0;
+  for (const name of wellKnownArtistNames) {
+    if (artist.includes(String(name).toLowerCase())) return 0;
+  }
+  return 12;
 }
 
 function keyFor(title, artist) {

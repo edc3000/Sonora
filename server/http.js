@@ -2,7 +2,6 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { sendToMainDevice } from "./adapters/upnp.js";
-import { routeIntent } from "./router.js";
 
 const mime = {
   ".html": "text/html; charset=utf-8",
@@ -69,30 +68,12 @@ async function handleApi(request, response, url, deps) {
   }
   if (request.method === "POST" && url.pathname === "/api/chat") {
     const body = await readBody(request);
-    const route = routeIntent(body.message || "", "user");
-    if (route.type === "control") {
-      if (route.action === "next") return sendJson(response, 200, await deps.nextTrack());
-      if (route.action === "previous") return sendJson(response, 200, await deps.previousTrack());
-      if (route.action === "pause") {
-        await deps.state.update((state) => {
-          state.now.status = "paused";
-          return state;
-        });
-        deps.broadcast("now-playing", deps.state.snapshot.now);
-        return sendJson(response, 200, deps.state.snapshot.now);
-      }
-      await deps.state.update((state) => {
-        state.now.status = state.now.track ? "playing" : "idle";
-        return state;
-      });
-      deps.broadcast("now-playing", deps.state.snapshot.now);
-      return sendJson(response, 200, deps.state.snapshot.now);
-    }
-    return sendJson(response, 200, await deps.runShow({
-      input: body.message || "",
-      trigger: "user",
-      route
-    }));
+    const result = await deps.handleChat({ message: body.message || "", trigger: "user" });
+    return sendJson(response, 200, {
+      now: result.now,
+      reply: result.reply || "",
+      actions: (result.actions || []).map(({ name, result: outcome }) => ({ name, ok: outcome?.ok !== false }))
+    });
   }
   if (request.method === "POST" && url.pathname === "/api/player/play") {
     const body = await readBody(request);

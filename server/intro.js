@@ -1,25 +1,162 @@
+export const INTRO_PERSONA_VERSION = "v2-late-night-2026-05-18";
+
 export function introForTrack(track, { index = 0, reason = "" } = {}) {
   return buildStoryLinkedIntro(track, { index, reason });
 }
 
 export function selectIntroForTrack(track, { index = 0, reason = "" } = {}) {
   const existing = cleanText(track?.intro);
-  if (existing && !isGenericIntro(existing)) return existing.slice(0, 500);
+  const langMismatch = existing && hasLanguageMismatch(track, existing);
+  if (existing && !langMismatch && !isGenericIntro(existing)) return existing.slice(0, 500);
   return buildStoryLinkedIntro(track, { index, reason });
+}
+
+function hasLanguageMismatch(track, intro) {
+  const lang = detectLanguage(track);
+  if (lang === "en") return false;
+  const cjk = (intro.match(/[一-鿿]/g) || []).length;
+  const latin = (intro.match(/[A-Za-z]/g) || []).length;
+  const totalLetters = cjk + latin;
+  if (!totalLetters) return false;
+  return latin / totalLetters >= 0.5;
 }
 
 export function buildStoryLinkedIntro(track, { index = 0, reason = "" } = {}) {
   if (!track?.title) return "";
+  const lang = detectLanguage(track);
+  if (lang === "yue" || lang === "zh") return buildChineseIntro(track, { index, reason });
+  return buildEnglishIntro(track, { index, reason });
+}
+
+function buildEnglishIntro(track, { index, reason }) {
   const title = track.title;
   const artist = track.artist || "this artist";
-  const placement = index === 0 ? "We are opening with" : "Coming up next";
+  const opening = index === 0
+    ? `Opening with ${title} by ${artist}.`
+    : `Next: ${title} by ${artist}.`;
   const story = compactTrackStory(track);
-  const trackContext = storySummary(track, story);
-  const setContext = setFitLine(track, { reason });
-  return `${placement} ${title} by ${artist}. ${trackContext} ${setContext}`
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 500);
+  const middle = storySummary(track, story);
+  const closing = setFitLine(track, { reason });
+  return `${opening} ${middle} ${closing}`.replace(/\s+/g, " ").trim().slice(0, 600);
+}
+
+function buildChineseIntro(track, { index, reason }) {
+  const title = track.title;
+  const artist = track.artist || "这位歌手";
+  const opening = index === 0
+    ? `开场：${artist} 的《${title}》。`
+    : `下一首：${artist}《${title}》。`;
+  const story = compactTrackStory(track);
+  const middle = storySummaryZh(track, story);
+  const closing = setFitLineZh(track, { reason });
+  return `${opening}${middle}${closing}`.replace(/\s+/g, " ").trim().slice(0, 360);
+}
+
+function pickHookIndex(track, modulo) {
+  const key = String(track.id || `${track.title || ""}::${track.artist || ""}`);
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  }
+  return hash % Math.max(1, modulo);
+}
+
+
+function storySummaryZh(track, story) {
+  const record = [story.album, story.year].filter(Boolean).join("·");
+  const hook = pickHookIndex(track, 3);
+  if (story.lyricQuote && record) {
+    const variants = [
+      `出自《${record}》，开头一句"${story.lyricQuote}"，先把画面立起来。`,
+      `《${record}》里的这首，从"${story.lyricQuote}"开口，剩下几分钟你会自己接住。`,
+      `《${record}》——它的第一句是"${story.lyricQuote}"。`
+    ];
+    return variants[hook];
+  }
+  if (story.lyricQuote) {
+    const variants = [
+      `它一开口就是"${story.lyricQuote}"。`,
+      `第一句"${story.lyricQuote}"，画面先于旋律落下。`,
+      `从"${story.lyricQuote}"那一句开始听。`
+    ];
+    return variants[hook];
+  }
+  if (record) {
+    const variants = [
+      `这首出自《${record}》。`,
+      `《${record}》里的歌，那年的录音质感你会认出来。`,
+      `《${record}》——把它放在这个钟点。`
+    ];
+    return variants[hook];
+  }
+  if (story.reasons?.length) {
+    const cleanReason = story.reasons[0].replace(/similar to liked song:|liked-song seed|familiar liked-song seed/i, "").trim();
+    if (cleanReason) return `它是顺着你以前听过的 ${cleanReason} 那条线摸过来的。`;
+  }
+  return "";
+}
+
+function setFitLineZh(track, { reason = "" } = {}) {
+  const story = compactTrackStory(track);
+  const reasonText = cleanText(reason) || story.reasons?.[0] || "";
+  if (/similar to liked song:/i.test(reasonText)) {
+    const seed = reasonText.replace(/.*similar to liked song:\s*/i, "").trim();
+    if (seed) return ` 这首是顺着你以前听 ${seed} 那条线接过来的。`;
+  }
+  if (/liked-song seed|familiar liked-song seed/i.test(reasonText)) {
+    return " 它已经在你的播放记忆里。";
+  }
+  return "";
+}
+
+function knownArtistStoryZh(track, lang) {
+  const text = `${track.title || ""} ${track.artist || ""} ${track.album || ""}`.toLowerCase();
+  if (/陈奕迅|陳奕迅|eason/.test(text)) {
+    return "Eason 唱这类歌不靠音量，他靠咬字的停顿——总有一两个字他故意让它欲言又止。";
+  }
+  if (/周柏豪|pakho/.test(text) && /卫兰|衛蘭|janice/.test(text)) {
+    return "Pakho 和卫兰的对唱从来不抢戏，两个人都在收着，留白比情绪本身更动人。";
+  }
+  if (/周柏豪|pakho/.test(text)) {
+    return "周柏豪最稳的那种深夜粤语情歌，把感情按在水面下，但浮力一直在。";
+  }
+  if (/容祖儿|容祖兒|joey/.test(text)) {
+    return "容祖儿的版本永远干净利落，副歌不靠喊，靠咬住那个稳定的中音。";
+  }
+  if (/杨千嬅|楊千嬅|miriam/.test(text)) {
+    return "杨千嬅那种直接、带伤但不卖伤的港乐性格，旋律一进来你就会认得。";
+  }
+  if (/张敬轩|張敬軒|hins/.test(text)) {
+    return "张敬轩在这种歌里最像一个真正的歌手——克制、精准，但情绪始终在出口处。";
+  }
+  if (/林家谦|林家謙|terence lam/.test(text)) {
+    return "林家谦的写法很私人，钢琴几个音先把房间安静下来，他再开口。";
+  }
+  if (/陈柏宇|陳柏宇|jason chan/.test(text)) {
+    return "陈柏宇这几年的歌都在练'轻'，不靠技巧炫，靠把一句话说得像第一次说。";
+  }
+  if (/dear jane|rubberband|beyond/.test(text)) {
+    return "香港 band sound 的脉络，吉他承担的情绪和人声一样多。";
+  }
+  if (/my little airport/.test(text)) {
+    return "My Little Airport 那种近乎日常的录音质感，像在很近的地方录的，没修过。";
+  }
+  if (/李志/.test(text)) {
+    return "李志用一把不算亮的吉他和一个干净的人声，把没什么戏剧性的事讲得别人也听过。";
+  }
+  if (/周杰伦|周杰倫|jay chou/.test(text)) {
+    return "周杰伦把华语流行重新写了一遍那几张专辑里的歌——和声排布和节奏断点至今都还有人在抄。";
+  }
+  if (/陈绮贞|陳綺貞|cheer chen/.test(text)) {
+    return "陈绮贞的吉他和人声基本是同一种材质，所以这首听起来像她自己写给自己听的版本。";
+  }
+  if (/林俊杰|林俊傑|jj lin/.test(text)) {
+    return "JJ 的强项一向是把流行歌的旋律编得不流行——你会被某个转折抓住。";
+  }
+  if (lang === "yue" || isCantoneseTrack(track)) {
+    return "粤语流行歌里那种把私人情绪压到很轻的写法，配在这个时段刚好。";
+  }
+  return "";
 }
 
 export function compactTrackStory(track = {}) {
@@ -41,7 +178,6 @@ export function compactTrackStory(track = {}) {
 }
 
 function storySummary(track, story) {
-  const knownArtistContext = knownArtistStory(track);
   const record = [story.album, story.year].filter(Boolean).join(", ");
   if (story.lyricQuote && record) {
     return `From ${record}, it opens on "${story.lyricQuote}," giving the next few minutes a concrete image.`;
@@ -49,10 +185,13 @@ function storySummary(track, story) {
   if (story.lyricQuote) {
     return `The first image is "${story.lyricQuote}," so the song enters with a clear scene.`;
   }
-  if (knownArtistContext) return knownArtistContext;
-  if (record) return `The ${record} setting gives the song a specific place in the set.`;
-  if (story.reasons?.length) return `It came through ${story.reasons[0]}, so the handoff starts from a real listening trail.`;
-  return "It has a distinct melodic center, enough to make the handoff feel chosen rather than shuffled.";
+  if (record) {
+    return `From ${record}, with the room cues that recording gives.`;
+  }
+  if (story.reasons?.length) {
+    return `It came through ${story.reasons[0]}, so the handoff starts from a real listening trail.`;
+  }
+  return "";
 }
 
 function setFitLine(track, { reason = "" } = {}) {
@@ -60,48 +199,10 @@ function setFitLine(track, { reason = "" } = {}) {
   const reasonText = cleanText(reason) || story.reasons?.[0] || "";
   if (/similar to liked song:/i.test(reasonText)) {
     const seed = reasonText.replace(/.*similar to liked song:\s*/i, "").trim();
-    if (seed) return `I am using that link back to ${seed} as the emotional bridge into this one.`;
+    if (seed) return `Pulled from your listening trail through ${seed}.`;
   }
   if (/liked-song seed|familiar liked-song seed/i.test(reasonText)) {
-    return "Because it already lives in your listening memory, the handoff can lean into recognition rather than discovery.";
-  }
-  if (/night|late|soft/i.test(reasonText)) {
-    return "It fits the late signal by letting the story breathe before the track arrives.";
-  }
-  if (/work|focus|steady/i.test(reasonText)) {
-    return "It keeps the set steady while giving the song a specific doorway in.";
-  }
-  return "It fits this set because the song has a scene to enter, not just a tempo to fill.";
-}
-
-function knownArtistStory(track = {}) {
-  const text = `${track.title || ""} ${track.artist || ""} ${track.album || ""}`.toLowerCase();
-  if (/the chairs|椅子/.test(text)) {
-    return "The Chairs bring that soft Taiwanese indie-pop glow: close harmonies, unhurried guitars, and a melody that feels hand-drawn.";
-  }
-  if (/周柏豪|pakho/.test(text) && /卫兰|衛蘭|janice/.test(text)) {
-    return "It is a Cantonese pop duet built on restraint, where two familiar voices trade tenderness instead of drama.";
-  }
-  if (/周柏豪|pakho/.test(text)) {
-    return "Pakho Chau is at his best in this kind of late-night Cantopop ballad, keeping the feeling controlled but unmistakably present.";
-  }
-  if (/陈奕迅|陳奕迅|eason/.test(text)) {
-    return "Eason Chan turns a pop song into a small piece of theatre, letting the lyric land through phrasing more than volume.";
-  }
-  if (/容祖儿|容祖兒|joey/.test(text)) {
-    return "Joey Yung carries the song with a polished Cantopop clarity, making the hook feel graceful rather than oversized.";
-  }
-  if (/杨千嬅|楊千嬅|miriam/.test(text)) {
-    return "Miriam Yeung brings that bright, bruised Hong Kong-pop character: direct, resilient, and quietly cinematic.";
-  }
-  if (/张敬轩|張敬軒|hins/.test(text)) {
-    return "Hins Cheung leans into the song with the precision of a classic Cantopop balladeer, measured but emotionally open.";
-  }
-  if (/dear jane|rubberband|beyond/.test(text)) {
-    return "It sits in the Hong Kong band tradition, with guitars carrying the emotion as much as the vocal line.";
-  }
-  if (isCantoneseTrack(track)) {
-    return "This is Cantopop in its intimate mode: melodic, lyrical, and built for the small private weather of the day.";
+    return "Already in your library.";
   }
   return "";
 }
@@ -154,8 +255,17 @@ function isGenericIntro(text) {
     /sets? the tone/,
     /brings? (a|the) mood/
   ];
-  const hasSpecificAnchor = /"[^"]{6,}"|\b(19|20)\d{2}\b|\balbum\b|\blyric\b|\bfrom\b.+\bby\b/i.test(text);
+  const hasSpecificAnchor = /"[^"]{6,}"|"[^"]{4,}"|\b(19|20)\d{2}\b|\balbum\b|\blyric\b|\bfrom\b.+\bby\b|专辑|專輯|歌词|歌詞|出自|《[^》]+》/i.test(text);
   return genericPatterns.some((pattern) => pattern.test(lower)) && !hasSpecificAnchor;
+}
+
+export function detectLanguage(track = {}) {
+  if (isCantoneseTrack(track)) return "yue";
+  const text = `${track.title || ""} ${track.artist || ""} ${track.album || ""}`;
+  const cjk = text.match(/[一-鿿]/g) || [];
+  const latin = text.match(/[A-Za-z]/g) || [];
+  if (cjk.length >= 2 && cjk.length >= latin.length / 2) return "zh";
+  return "en";
 }
 
 const BAD_LYRIC_TEXT_PATTERN = /(?:\berror\b|\bfailed\b|\bfailure\b|\bunavailable\b|\bundefined\b|\bnull\b|\bexception\b|\brequest\b|\bnot found\b|\btimeout\b|\bnetwork\b|\bcopyright\b|\binstrumental\b|\bcomposer\b|\blyricist\b|\blyrics by\b|\barranger\b|\bproducer\b|\brecording\b|\bmix(?:ed)? by\b|\bmaster(?:ed)? by\b|\bvocal\b|\bguitar\b|\bbass\b|\bdrums\b|\bpiano\b|\bviolin\b|\bviola\b|\bcello\b|\bstrings\b|\bdistributed by\b|无法|失敗|失败|錯誤|错误|報錯|报错|獲取|获取|暂无|作词|作詞|作曲|编曲|編曲|制作人|監製|监制|出品|发行|發行|纯音乐|純音樂|音乐总监|音樂總監|舞台总监|舞台總監|音响总监|音響總監|高级音乐顾问|高級音樂顧問|原唱|录音|錄音|混音|母带|母帶|OP|SP|ISRC|℗|©)/i;
