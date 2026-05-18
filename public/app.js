@@ -1,3 +1,14 @@
+// 完全禁用浏览器原生 TTS 兜底：把 speak() 替换成 no-op，无论何处误调都不会发声。
+// cancel() / 已合成的 utterance.onend 之类的 API 保持原样，避免破坏其他逻辑。
+if (typeof window !== "undefined" && "speechSynthesis" in window) {
+  try {
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak = () => {};
+  } catch {
+    // 某些浏览器不允许覆盖 native 方法 — 已经 cancel 是兜底
+  }
+}
+
 const state = {
   now: null,
   settingsOpen: false,
@@ -1633,40 +1644,17 @@ async function speakText(text, ttsUrl = "", { force = false, key = "" } = {}) {
   if (!text) return Promise.resolve();
   if (!force && key && lastSpokenIntroKey === key && radio.pendingIntroSeek == null) return Promise.resolve();
   if (key) lastSpokenIntroKey = key;
+  // 始终先取消任何已在排队/进行中的浏览器原生 TTS——
+  // 防止后端 TTS 后到与 speechSynthesis 重叠。
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   if (ttsUrl) {
     const result = await playHostAudio(ttsUrl);
     if (result.ok) return;
     refs.debugTts.textContent = result.error || `TTS audio failed: ${ttsUrl}`;
     logEvent(result.error || "tts audio failed");
-    await waitForHostText(text);
-    return;
   }
-  return new Promise((resolve) => {
-    const fallbackMs = Math.min(Math.max(text.length * 170, 1800), 12000);
-    clearTimeout(state.transitionTimer);
-    state.transitionTimer = setTimeout(resolve, fallbackMs);
-    if (!("speechSynthesis" in window)) {
-      resolve();
-      return;
-    }
-    window.speechSynthesis.cancel();
-    const speech = getSpeechProfile(text);
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = speech.lang;
-    utterance.rate = speech.rate;
-    utterance.pitch = speech.pitch;
-    utterance.volume = 0.9;
-    if (speech.voice) utterance.voice = speech.voice;
-    utterance.onend = () => {
-      clearTimeout(state.transitionTimer);
-      resolve();
-    };
-    utterance.onerror = () => {
-      clearTimeout(state.transitionTimer);
-      resolve();
-    };
-    window.speechSynthesis.speak(utterance);
-  });
+  // 没 TTS URL 或 TTS 播放失败时：静默等待用户自己读 host 区文字，不再使用浏览器 speechSynthesis。
+  await waitForHostText(text);
 }
 
 function waitForHostText(text) {
@@ -2069,6 +2057,8 @@ async function commitProgramSeek(progress, shouldPlay) {
   updatePlayButton();
 
   if (state.now) state.now.status = status;
+  document.body.dataset.status = status;
+  if (refs.hostState) refs.hostState.textContent = status;
   postJson("/api/player/seek", { progress: trackProgress, status, silent: true })
     .catch(() => logEvent("seek sync failed"));
 }

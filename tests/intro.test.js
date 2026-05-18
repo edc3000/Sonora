@@ -244,3 +244,32 @@ test("selectIntroForTrack: chinese intro with embedded english proper nouns (alb
   const got = selectIntroForTrack(track);
   assert.equal(got, track.intro, "english proper nouns inside chinese narration should not trigger mismatch");
 });
+
+test("lyric image strips duet role prefixes like '陈：' / '祖儿：' / 'Eason:'", () => {
+  const intro = buildStoryLinkedIntro({
+    title: "Listen to Eason's Moment",
+    artist: "陈奕迅",
+    album: "Listen to Eason Chan",
+    publishTime: "2007",
+    lyricLines: [
+      { time: 4, text: "陈：说 我该怎么说" },
+      { time: 8, text: "祖儿：我该怎么做" }
+    ]
+  }, { index: 1 });
+  // 角色标记应该被剥离
+  assert.doesNotMatch(intro, /陈：|祖儿：/, "intro must not show duet role labels");
+  // 歌词内容仍保留
+  assert.match(intro, /说 我该怎么说|我该怎么做/);
+});
+
+test("lyric image strips english role prefixes too (e.g. 'Eason:')", () => {
+  const intro = buildStoryLinkedIntro({
+    title: "Duet",
+    artist: "Eason Chan / Joey Yung",
+    lyricLines: [
+      { time: 2, text: "Eason: keep the chorus quiet" }
+    ]
+  });
+  assert.doesNotMatch(intro, /Eason:/, "english role label should be stripped from lyric quote");
+  assert.match(intro, /keep the chorus quiet/);
+});

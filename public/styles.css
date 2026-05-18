@@ -582,9 +582,23 @@ body[data-status="speaking"] .voice-bars i:nth-child(2n) { animation-delay: 0.1s
 body[data-status="speaking"] .voice-bars i:nth-child(3n) { animation-delay: 0.2s; }
 body[data-status="speaking"] .voice-bars i:nth-child(5n) { animation-delay: 0.3s; }
 
+body[data-status="playing"] .voice-bars i {
+  background: var(--ink-dim);
+  animation: voice-pulse 1.4s ease-in-out infinite;
+}
+
+body[data-status="playing"] .voice-bars i:nth-child(2n) { animation-delay: 0.18s; }
+body[data-status="playing"] .voice-bars i:nth-child(3n) { animation-delay: 0.36s; }
+body[data-status="playing"] .voice-bars i:nth-child(5n) { animation-delay: 0.54s; }
+
 @keyframes voice-dance {
   0%, 100% { height: 3px; }
   50% { height: 14px; }
+}
+
+@keyframes voice-pulse {
+  0%, 100% { height: 3px; }
+  50% { height: 8px; }
 }
 
 .transcript-panel {

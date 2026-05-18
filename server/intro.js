@@ -217,9 +217,14 @@ function lyricImage(lines = []) {
 }
 
 function normalizeLyricText(value) {
-  return cleanText(value)
-    .replace(/^[A-Z]\s*[：:]\s*/i, "")
-    .replace(/^[合独男男女女声]\s*[：:]\s*/, "")
+  const raw = cleanText(value);
+  // 在剥离角色前缀前先检测原始文本里的 metadata 关键词（作词/作曲/制作 等），
+  // 避免 "作词：Someone" 被剥离成 "Someone" 后绕过 BAD_LYRIC_TEXT_PATTERN 过滤
+  if (BAD_LYRIC_TEXT_PATTERN.test(raw)) return "";
+  // 对唱/分声部角色前缀：1-5 个中英文字符 + 冒号
+  // 覆盖 "A:" / "合:" / "男:" / "陈:" / "祖儿:" / "Eason:" 等
+  return raw
+    .replace(/^[一-鿿A-Za-z]{1,5}\s*[:：]\s*/, "")
     .replace(/\s+/g, " ")
     .trim();
 }
